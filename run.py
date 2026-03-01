@@ -43,6 +43,11 @@ def main():
     mcp_bridge.decisions = decisions
     mcp_bridge.room_settings = room_settings
 
+    # Enable cursor persistence across restarts
+    data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
+    mcp_bridge._CURSORS_FILE = data_dir / "mcp_cursors.json"
+    mcp_bridge._load_cursors()
+
     # Start MCP servers in background threads
     http_port = config.get("mcp", {}).get("http_port", 8200)
     sse_port = config.get("mcp", {}).get("sse_port", 8201)

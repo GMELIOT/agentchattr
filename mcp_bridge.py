@@ -6,9 +6,11 @@ Serves two transports for compatibility:
 """
 
 import json
+import os
 import time
 import logging
 import threading
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -24,6 +26,9 @@ _presence_lock = threading.Lock()   # guards both _presence and _activity
 _cursors: dict[str, dict[str, int]] = {}  # agent_name → {channel_name → last_id}
 _cursors_lock = threading.Lock()
 PRESENCE_TIMEOUT = 120  # 2 missed heartbeats (60s interval) = offline
+
+# Cursor persistence — set by run.py to enable saving cursors across restarts
+_CURSORS_FILE: Path | None = None
 
 _MCP_INSTRUCTIONS = (
     "agentchattr — a shared chat channel for coordinating development between AI agents and humans. "
@@ -117,6 +122,34 @@ def _serialize_messages(msgs: list[dict]) -> str:
     return json.dumps(out, ensure_ascii=False) if out else "No new messages."
 
 
+def _load_cursors():
+    """Load cursor state from disk (called by run.py after store init)."""
+    global _cursors
+    if _CURSORS_FILE is None or not _CURSORS_FILE.exists():
+        return
+    try:
+        data = json.loads(_CURSORS_FILE.read_text("utf-8"))
+        with _cursors_lock:
+            _cursors.update(data)
+    except Exception:
+        log.warning("Failed to load cursor state from %s", _CURSORS_FILE)
+
+
+def _save_cursors():
+    """Persist cursor state to disk atomically (write temp + rename)."""
+    if _CURSORS_FILE is None:
+        return
+    try:
+        with _cursors_lock:
+            snapshot = dict(_cursors)
+        _CURSORS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _CURSORS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(snapshot), "utf-8")
+        os.replace(tmp, _CURSORS_FILE)  # atomic on POSIX
+    except Exception:
+        log.warning("Failed to save cursor state to %s", _CURSORS_FILE)
+
+
 def migrate_cursors_rename(old_name: str, new_name: str):
     """Move cursor entries from old channel name to new channel name."""
     with _cursors_lock:
@@ -138,6 +171,7 @@ def _update_cursor(sender: str, msgs: list[dict], channel: str | None):
         with _cursors_lock:
             agent_cursors = _cursors.setdefault(sender, {})
             agent_cursors[ch_key] = msgs[-1]["id"]
+        _save_cursors()
 
 
 def chat_read(sender: str = "", since_id: int = 0, limit: int = 20, channel: str = "") -> str:

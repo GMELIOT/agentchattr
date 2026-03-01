@@ -44,14 +44,10 @@ class Router:
     def get_targets(self, sender: str, text: str, channel: str = "general") -> list[str]:
         """Determine which agents should receive this message."""
         ch = self._get_ch(channel)
-
-        if ch["paused"]:
-            return []
-
         mentions = self.parse_mentions(text)
 
         if not self._is_agent(sender):
-            # Human message resets hop counter for this channel
+            # Human message resets hop counter and unpauses
             ch["hop_count"] = 0
             ch["paused"] = False
             ch["guard_emitted"] = False
@@ -63,7 +59,10 @@ class Router:
                 return [self.default_mention]
             return mentions
         else:
-            # Agent message: only route if explicit @mention
+            # Agent message: blocked while loop guard is active
+            if ch["paused"]:
+                return []
+            # Only route if explicit @mention
             if not mentions:
                 return []
             ch["hop_count"] += 1

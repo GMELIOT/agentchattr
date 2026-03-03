@@ -218,6 +218,7 @@ def chat_send(
         return f"Message #{reply_to} not found."
 
     msg = store.add(sender, message.strip(), attachments=attachments, reply_to=reply_id, channel=channel)
+    _update_cursor(sender, [msg], channel)
     with _presence_lock:
         _presence[sender] = time.time()
     return f"Sent (id={msg['id']})"

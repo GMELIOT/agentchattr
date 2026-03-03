@@ -688,12 +688,12 @@ main#timeline {
 
 /* --- Delete mode --- */
 
-#messages .message:not(.join-msg):not(.system-msg) {
-    transition: padding-left 0.2s ease;
+#messages .message:not(.join-msg):not(.system-msg) > :not(.delete-radio) {
+    transition: transform 0.2s ease;
 }
 
-#messages.delete-mode .message:not(.join-msg):not(.system-msg) {
-    padding-left: 40px;
+#messages.delete-mode .message:not(.join-msg):not(.system-msg) > :not(.delete-radio) {
+    transform: translateX(30px);
 }
 
 #messages.delete-mode .msg-actions .delete-btn {

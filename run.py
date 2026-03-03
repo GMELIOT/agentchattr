@@ -5,7 +5,6 @@ import secrets
 import sys
 import threading
 import time
-import tomllib
 import logging
 from pathlib import Path
 
@@ -21,13 +20,13 @@ def main():
         datefmt="%H:%M:%S",
     )
 
+    from config_loader import load_config
     config_path = ROOT / "config.toml"
     if not config_path.exists():
         print(f"Error: {config_path} not found")
         sys.exit(1)
 
-    with open(config_path, "rb") as f:
-        config = tomllib.load(f)
+    config = load_config(ROOT)
 
     # --- Security: generate a random session token (in-memory only) ---
     session_token = secrets.token_hex(32)

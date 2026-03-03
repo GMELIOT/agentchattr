@@ -37,3 +37,18 @@ sse_port = 8201
 [images]
 upload_dir = "./uploads"
 max_size_mb = 10
+
+# --- API agents (local models) ---
+# Add local model agents in config.local.toml (gitignored).
+# Example config.local.toml:
+#
+#   [agents.qwen]
+#   type = "api"
+#   base_url = "http://localhost:8189/v1"
+#   model = "qwen3-4b"
+#   color = "#8b5cf6"
+#   label = "Qwen"
+#   # api_key_env = "MY_API_KEY"     # optional: env var name for API key
+#   # system_prompt = "You are ..."   # optional: custom system prompt
+#
+# Then run: python wrapper_api.py qwen

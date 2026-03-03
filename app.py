@@ -186,6 +186,14 @@ def _install_security_middleware(token: str, cfg: dict):
                 )
 
             # --- Token check ---
+            # Allow registered agents to authenticate via Bearer token
+            # for /api/messages and /api/send (no browser session needed).
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer ") and path in ("/api/messages", "/api/send"):
+                bearer = auth_header[7:].strip()
+                if _self.registry and _self.registry.resolve_token(bearer):
+                    return await call_next(request)
+
             req_token = (
                 request.headers.get("x-session-token")
                 or request.query_params.get("token")
@@ -1072,11 +1080,37 @@ async def upload_image(file: UploadFile = File(...)):
 
 
 @app.get("/api/messages")
-async def get_messages(since_id: int = 0, limit: int = 50):
+async def get_messages(since_id: int = 0, limit: int = 50, channel: str = ""):
+    ch = channel if channel else None
     if since_id:
-        return store.get_since(since_id)
-    return store.get_recent(limit)
+        return store.get_since(since_id, channel=ch)
+    return store.get_recent(limit, channel=ch)
 
+
+@app.post("/api/send")
+async def api_send(request: Request):
+    """REST endpoint for API agents to send messages without WebSocket.
+
+    Authenticated via Bearer registration token. Sender is resolved from
+    the token — the agent cannot impersonate another identity.
+    """
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return JSONResponse({"error": "missing Authorization: Bearer <token>"}, status_code=401)
+    token = auth[7:].strip()
+    inst = registry.resolve_token(token) if registry else None
+    if not inst:
+        return JSONResponse({"error": "invalid or expired token"}, status_code=403)
+
+    sender = inst["name"]
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "text is required"}, status_code=400)
+    channel = body.get("channel", "general")
+
+    msg = store.add(sender, text, channel=channel)
+    return JSONResponse(msg)
 
 
 @app.get("/api/status")

@@ -22,7 +22,6 @@ import shutil
 import sys
 import threading
 import time
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -241,8 +240,8 @@ def main():
     import urllib.error
     import urllib.request
 
-    with open(ROOT / "config.toml", "rb") as f:
-        config = tomllib.load(f)
+    from config_loader import load_config
+    config = load_config(ROOT)
 
     agent_names = list(config.get("agents", {}).keys())
 

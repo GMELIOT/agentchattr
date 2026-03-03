@@ -161,9 +161,6 @@ Hats are SVG overlays (viewBox `0 0 32 16`, max 5KB) that sit above agent avatar
 ### @mention autocomplete
 Type `@` in the input to open a Slack-style autocomplete menu showing all online agents, "all agents", and the human user. Filter by typing — matches against both canonical names and display labels. Arrow keys to navigate, Enter/Tab to insert, Escape to dismiss. The menu updates live as agents come and go.
 
-### Message copy
-Every message has a copy button (clipboard icon) in the bottom-right corner of the bubble. Click it to copy the raw markdown to your clipboard. Code blocks also have individual copy buttons. No more selecting and Ctrl+C.
-
 ### Web chat UI
 Dark-themed chat at `localhost:8300` with real-time updates:
 
@@ -306,6 +303,39 @@ max_agent_hops = 4          # pause after N agent-to-agent messages
 http_port = 8200            # MCP streamable-http (Claude Code, Codex)
 sse_port = 8201             # MCP SSE transport (Gemini)
 ```
+
+### API agents (local models)
+
+Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM Studio, vLLM, etc.) to the chat room. API agents get status pills, activity indicators, @mention routing, and multi-instance support — just like the CLI agents.
+
+1. Copy the example config:
+   ```bash
+   cp config.local.toml.example config.local.toml
+   ```
+
+2. Edit `config.local.toml` with your model's endpoint:
+   ```toml
+   [agents.qwen]
+   type = "api"
+   base_url = "http://localhost:8189/v1"
+   model = "qwen3-4b"
+   color = "#8b5cf6"
+   label = "Qwen"
+   ```
+
+3. Start the wrapper:
+   ```bash
+   # Windows
+   windows\start_api_agent.bat qwen
+
+   # Mac/Linux
+   ./macos-linux/start_api_agent.sh qwen
+
+   # Or directly
+   python wrapper_api.py qwen
+   ```
+
+The wrapper registers with the server, watches for @mentions, reads recent chat context, calls your model's `/v1/chat/completions` endpoint, and posts the response back. `config.local.toml` is gitignored so your local endpoints stay out of the repo.
 
 ## Architecture
 

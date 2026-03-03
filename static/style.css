@@ -86,6 +86,39 @@ header h1 {
     font-size: 16px;
     font-weight: 600;
     color: var(--text);
+    margin: 0;
+    line-height: 1;
+}
+
+.discord-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px 3px 8px;
+    margin-top: 3px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    opacity: 0;
+    transform: translateX(-6px);
+    transition: opacity 0.2s, transform 0.2s, background 0.15s, color 0.15s;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.header-left:hover .discord-pill {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.discord-pill:hover {
+    background: rgba(88, 101, 242, 0.25);
+    color: #7289da;
 }
 
 .subtitle {

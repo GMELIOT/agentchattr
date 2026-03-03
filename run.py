@@ -96,14 +96,28 @@ def main():
 
     # --- Security: warn if binding to a non-localhost address ---
     if host not in ("127.0.0.1", "localhost", "::1"):
+        print(f"\n  !! SECURITY WARNING — binding to {host} !!")
+        print("  This exposes agentchattr to your local network.")
+        print()
+        print("  Risks:")
+        print("  - No TLS: traffic (including session token) is plaintext")
+        print("  - Anyone on your network can sniff the token and gain full access")
+        print("  - With the token, anyone can @mention agents and trigger tool execution")
+        print("  - If agents run with auto-approve, this means remote code execution")
+        print()
+        print("  Only use this on a trusted home network. Never on public/shared WiFi.")
         if "--allow-network" not in sys.argv:
-            print("\n  !! SECURITY WARNING !!")
-            print(f"  Server is configured to bind to {host}")
-            print("  This exposes agentchattr to the network.")
             print("  Pass --allow-network to start anyway, or set host to 127.0.0.1.\n")
             sys.exit(1)
         else:
-            print(f"\n  WARNING: Binding to {host} — network access enabled via --allow-network")
+            print()
+            try:
+                confirm = input("  Type YES to accept these risks and start: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                confirm = ""
+            if confirm != "YES":
+                print("  Aborted.\n")
+                sys.exit(1)
 
     print(f"\n  agentchattr")
     print(f"  Web UI:  http://{host}:{port}")

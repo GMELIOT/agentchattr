@@ -1004,11 +1004,14 @@ function showBubbleRolePicker(btn, agentName) {
 
     const ROLE_PRESETS = [
         { label: 'Planner', emoji: '📋' },
+        { label: 'Designer', emoji: '✨' },
+        { label: 'Architect', emoji: '🏛️' },
         { label: 'Builder', emoji: '🔨' },
         { label: 'Reviewer', emoji: '🔍' },
         { label: 'Researcher', emoji: '🔬' },
-        { label: 'Chaos Gremlin', emoji: '😈' },
-        { label: 'Heckler', emoji: '🤡' },
+        { label: 'Red Team', emoji: '🛡️' },
+        { label: 'Wry', emoji: '🍸' },
+        { label: 'Unhinged', emoji: '🤪' },
         { label: 'Hype', emoji: '🎉' },
     ];
 

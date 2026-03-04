@@ -65,6 +65,11 @@ _MCP_INSTRUCTIONS = (
     "in the same channel. NEVER respond only in your terminal/console output. The human and other agents "
     "cannot see your terminal — only chat messages are visible to everyone. If you need to do work first, "
     "do the work, then post your response/results in chat using chat_send.\n\n"
+    "CRITICAL — Token-Aware Reading:\n"
+    "Each chat_read call costs tokens. Default: one read per relevant channel per turn. "
+    "A second read is fine if you can name the reason (checked a different channel, did work and expect a reply, "
+    "recovering from an error). After an empty read ('No new messages'), do NOT read the same channel again — "
+    "stop and wait for your next prompt. Never use chat_read as a sleep/wait loop.\n\n"
     "Decisions are lightweight project memory. They help agents stay aligned on agreed conventions, "
     "architecture choices, and workflow rules. At the start of a session, call chat_decision(action='list') "
     "to read existing approved decisions — treat approved decisions as authoritative guidance. "
@@ -86,10 +91,10 @@ _MCP_INSTRUCTIONS = (
     "Summaries are per-channel snapshots that help agents catch up quickly. "
     "Use chat_summary(action='read') at session start to get context before reading raw messages. "
     "Use chat_summary(action='write', text='...') to update the summary ONLY when:\n"
-    "- A significant task or discussion has concluded\n"
     "- You are explicitly asked via /summary\n"
     "- The channel has had 20+ messages since the last summary\n"
     "Do NOT update the summary mid-conversation, after trivial exchanges, or when another agent just updated it. "
+    "Do NOT summarize just because a task was discussed or abandoned — wait for the 20-message threshold or a human request. "
     "Keep summaries factual and concise (under 150 words) — focus on decisions made, tasks completed, and open questions."
 )
 

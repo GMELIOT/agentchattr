@@ -31,6 +31,7 @@ _presence_lock = threading.Lock()   # guards both _presence and _activity
 _renamed_from: set[str] = set()    # old names from renames — suppress leave messages
 _cursors: dict[str, dict[str, int]] = {}  # agent_name → {channel_name → last_id}
 _cursors_lock = threading.Lock()
+_empty_read_count: dict[str, int] = {}  # sender → consecutive empty reads
 PRESENCE_TIMEOUT = 10  # ~2 missed heartbeats (5s interval) = offline
 
 # Roles — per-instance, persisted to roles.json
@@ -246,7 +247,7 @@ def _serialize_messages(msgs: list[dict]) -> str:
         if m.get("reply_to") is not None:
             entry["reply_to"] = m["reply_to"]
         out.append(entry)
-    return json.dumps(out, ensure_ascii=False) if out else "No new messages."
+    return json.dumps(out, ensure_ascii=False) if out else ""
 
 
 def _load_cursors():
@@ -415,6 +416,22 @@ def chat_read(
     msgs = msgs[-limit:]
     _update_cursor(sender, msgs, ch)
     serialized = _serialize_messages(msgs)
+
+    # Escalating empty-read hints to discourage polling loops
+    if not serialized and sender:
+        _empty_read_count[sender] = _empty_read_count.get(sender, 0) + 1
+        n = _empty_read_count[sender]
+        if n == 1:
+            serialized = "No new messages. Do not poll — wait for your next prompt."
+        elif n == 2:
+            serialized = ("No new messages. You have read with no results twice — "
+                          "stop polling and wait for a trigger.")
+        else:
+            serialized = ("No new messages. STOP. Repeated empty reads waste tokens. "
+                          "Wait for your next prompt.")
+    elif sender:
+        _empty_read_count[sender] = 0
+
     # Prepend identity breadcrumb if multi-instance
     if sender and registry and registry.is_registered(sender):
         multi = registry.family_instance_count(sender) >= 2

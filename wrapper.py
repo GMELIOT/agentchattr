@@ -35,17 +35,24 @@ SERVER_NAME = "agentchattr"
 
 def _write_json_mcp_settings(config_file: Path, url: str, transport: str = "http",
                               *, token: str = "") -> Path:
-    """Write a settings-style JSON file with nested mcpServers config."""
+    """Write/merge a settings-style JSON file with nested mcpServers config.
+
+    Preserves existing servers in the file — only updates the agentchattr entry."""
     config_file.parent.mkdir(parents=True, exist_ok=True)
+    # Read existing file to preserve other servers
+    existing: dict = {}
+    if config_file.exists():
+        try:
+            existing = json.loads(config_file.read_text("utf-8"))
+        except Exception:
+            pass
+    servers = existing.get("mcpServers", {})
     entry: dict = {"type": transport, "url": url}
     if token:
         entry["headers"] = {"Authorization": f"Bearer {token}"}
-    payload = {
-        "mcpServers": {
-            SERVER_NAME: entry
-        }
-    }
-    config_file.write_text(json.dumps(payload, indent=2) + "\n", "utf-8")
+    servers[SERVER_NAME] = entry
+    existing["mcpServers"] = servers
+    config_file.write_text(json.dumps(existing, indent=2) + "\n", "utf-8")
     return config_file
 
 
@@ -91,8 +98,129 @@ def _write_claude_mcp_config(
     return config_file
 
 
+# ---------------------------------------------------------------------------
+# Built-in provider defaults (applied when agent config has no mcp_inject)
+# ---------------------------------------------------------------------------
+
+_BUILTIN_DEFAULTS: dict[str, dict] = {
+    "claude": {
+        "mcp_inject": "flag",
+        "mcp_flag": "--mcp-config",
+        "mcp_transport": "http",
+        "mcp_merge_project": True,  # include unity-mcp etc.
+    },
+    "gemini": {
+        "mcp_inject": "env",
+        "mcp_env_var": "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+        "mcp_transport": "sse",
+    },
+    "codex": {
+        "mcp_inject": "proxy_flag",
+        "mcp_proxy_flag_template": '-c mcp_servers.{server}.url="{url}"',
+    },
+}
+
+_VALID_INJECT_MODES = {"settings_file", "env", "flag", "proxy_flag"}
+
+
+def _resolve_mcp_inject(agent: str, agent_cfg: dict) -> dict:
+    """Resolve MCP injection config: explicit agent_cfg > built-in defaults > None."""
+    inject_mode = agent_cfg.get("mcp_inject")
+    if inject_mode:
+        return dict(agent_cfg)
+    if agent in _BUILTIN_DEFAULTS:
+        merged = dict(_BUILTIN_DEFAULTS[agent])
+        merged.update({k: v for k, v in agent_cfg.items() if k.startswith("mcp_")})
+        return merged
+    return {}
+
+
+def _get_server_url(mcp_cfg: dict, transport: str) -> str:
+    """Build the MCP server URL for the given transport."""
+    if transport == "sse":
+        port = mcp_cfg.get("sse_port", 8201)
+        return f"http://127.0.0.1:{port}/sse"
+    port = mcp_cfg.get("http_port", 8200)
+    return f"http://127.0.0.1:{port}/mcp"
+
+
+def _apply_mcp_inject(
+    inject_cfg: dict,
+    instance_name: str,
+    data_dir: Path,
+    proxy_url: str | None,
+    *,
+    token: str = "",
+    mcp_cfg: dict | None = None,
+    project_dir: Path | None = None,
+) -> tuple[list[str], dict[str, str], Path | None]:
+    """Apply MCP config injection based on the resolved inject config.
+
+    Returns (extra_launch_args, inject_env, settings_path_or_None).
+    settings_path is stored so re-registration can rewrite it.
+    """
+    mode = inject_cfg.get("mcp_inject")
+    if not mode:
+        return [], {}, None
+
+    launch_args: list[str] = []
+    inject_env: dict[str, str] = {}
+    settings_path: Path | None = None
+    config_dir = data_dir / "provider-config"
+    transport = inject_cfg.get("mcp_transport", "http")
+    server_url = _get_server_url(mcp_cfg or {}, transport)
+
+    if mode == "settings_file":
+        # Write a settings JSON file at a user-specified path (e.g. .qwen/settings.json)
+        raw_path = inject_cfg.get("mcp_settings_path", "")
+        if not raw_path:
+            raise ValueError(f"mcp_inject = 'settings_file' requires mcp_settings_path")
+        target = Path(raw_path)
+        if not target.is_absolute():
+            base = Path(project_dir) if project_dir else Path.cwd()
+            target = base / target
+        settings_path = _write_json_mcp_settings(target, server_url,
+                                                  transport=transport, token=token)
+        # Optionally set an env var pointing to the settings file
+        env_var = inject_cfg.get("mcp_env_var")
+        if env_var:
+            inject_env[env_var] = str(settings_path)
+
+    elif mode == "env":
+        # Write a settings file in provider-config dir, expose via env var
+        env_var = inject_cfg.get("mcp_env_var")
+        if not env_var:
+            raise ValueError(f"mcp_inject = 'env' requires mcp_env_var")
+        settings_path = _write_json_mcp_settings(
+            config_dir / f"{instance_name}-settings.json",
+            server_url, transport=transport, token=token,
+        )
+        inject_env[env_var] = str(settings_path)
+
+    elif mode == "flag":
+        # Write a config file, pass it as a CLI flag
+        flag = inject_cfg.get("mcp_flag", "--mcp-config")
+        merge_project = inject_cfg.get("mcp_merge_project", False)
+        project_servers = _read_project_mcp_servers(project_dir) if (merge_project and project_dir) else {}
+        settings_path = _write_claude_mcp_config(
+            config_dir / f"{instance_name}-mcp.json",
+            server_url, token=token, project_servers=project_servers,
+        )
+        launch_args = [flag, str(settings_path)]
+
+    elif mode == "proxy_flag":
+        # Pass the proxy URL as CLI flags (e.g. codex -c ...)
+        template = inject_cfg.get("mcp_proxy_flag_template",
+                                  '-c mcp_servers.{server}.url="{url}"')
+        expanded = template.format(server=SERVER_NAME, url=proxy_url or "")
+        launch_args = expanded.split()
+
+    return launch_args, inject_env, settings_path
+
+
 def _build_provider_launch(
     agent: str,
+    agent_cfg: dict,
     instance_name: str,
     data_dir: Path,
     proxy_url: str | None,
@@ -102,53 +230,24 @@ def _build_provider_launch(
     token: str = "",
     mcp_cfg: dict | None = None,
     project_dir: Path | None = None,
-) -> tuple[list[str], dict[str, str], dict[str, str]]:
-    """Return provider-specific launch args/env/inject_env.
+) -> tuple[list[str], dict[str, str], dict[str, str], Path | None]:
+    """Return provider-specific launch args/env/inject_env/settings_path.
 
     inject_env: env vars that must propagate INTO the agent process.  On
     Mac/Linux these are prefixed onto the tmux command via ``env VAR=val``
     because subprocess.run(env=...) only affects the tmux client binary.
     On Windows they are simply merged into the Popen env dict.
     """
-    launch_args = list(extra_args)
+    inject_cfg = _resolve_mcp_inject(agent, agent_cfg)
+    mcp_args, inject_env, settings_path = _apply_mcp_inject(
+        inject_cfg, instance_name, data_dir, proxy_url,
+        token=token, mcp_cfg=mcp_cfg, project_dir=project_dir,
+    )
+
+    launch_args = [*mcp_args, *extra_args]
     launch_env = dict(env)
-    inject_env: dict[str, str] = {}
-    config_dir = data_dir / "provider-config"
 
-    if agent == "claude":
-        # Claude connects DIRECTLY to the real MCP server with bearer token.
-        # No proxy needed — server resolves identity from token.
-        http_port = (mcp_cfg or {}).get("http_port", 8200)
-        server_url = f"http://127.0.0.1:{http_port}/mcp"
-        project_servers = _read_project_mcp_servers(project_dir) if project_dir else {}
-        config_path = _write_claude_mcp_config(
-            config_dir / f"{instance_name}-claude-mcp.json",
-            server_url,
-            token=token,
-            project_servers=project_servers,
-        )
-        launch_args = ["--mcp-config", str(config_path), *launch_args]
-    elif agent == "gemini":
-        # Gemini connects DIRECTLY to the real SSE server with bearer token.
-        # No proxy needed — server resolves identity from token.
-        sse_port = (mcp_cfg or {}).get("sse_port", 8201)
-        server_url = f"http://127.0.0.1:{sse_port}/sse"
-        settings_path = _write_json_mcp_settings(
-            config_dir / f"{instance_name}-gemini-settings.json",
-            server_url,
-            transport="sse",
-            token=token,
-        )
-        # Must propagate through tmux on Mac/Linux — use inject_env, not launch_env.
-        inject_env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
-    elif agent == "codex":
-        launch_args = [
-            "-c",
-            f'mcp_servers.{SERVER_NAME}.url="{proxy_url}"',
-            *launch_args,
-        ]
-
-    return launch_args, launch_env, inject_env
+    return launch_args, launch_env, inject_env, settings_path
 
 
 def _register_instance(server_port: int, base: str, label: str | None = None) -> dict:
@@ -205,6 +304,8 @@ def _fetch_role(server_port: int, agent_name: str) -> str:
         return ""
 
 
+
+
 def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None,
                    server_port: int = 8300, agent_name: str = ""):
     """Poll queue file and inject an MCP read task when triggered."""
@@ -236,7 +337,25 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                     if trigger_flag is not None:
                         trigger_flag[0] = True
                     time.sleep(0.5)
-                    prompt = f"mcp read #{channel} - you were mentioned, take appropriate action"
+
+                    # Check if this is a job/activity-scoped trigger
+                    job_id = None
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if isinstance(data, dict) and "job_id" in data:
+                                job_id = data["job_id"]
+                        except json.JSONDecodeError:
+                            pass
+
+                    if job_id:
+                        prompt = f"mcp read job_id={job_id} - you were mentioned in an activity, take appropriate action"
+                    else:
+                        prompt = f"mcp read #{channel} - you were mentioned, take appropriate action"
+
                     # Use current identity (may have changed via rename)
                     current_name, _ = get_identity_fn()
                     # Append role if set — check both current name and base name
@@ -298,12 +417,22 @@ def main():
     proxy = None
     proxy_url = None
 
-    # Claude and Gemini connect directly to the server with bearer token — no proxy.
-    # Codex still uses the local proxy for sender injection.
-    if agent not in ("claude", "gemini"):
+    # Resolve MCP injection mode to determine if a proxy is needed.
+    # Direct-connect modes (settings_file, env, flag) don't need a proxy.
+    # proxy_flag mode needs a proxy. No mcp_inject = proxy fallback.
+    inject_cfg = _resolve_mcp_inject(agent, agent_cfg)
+    inject_mode = inject_cfg.get("mcp_inject", "")
+    if inject_mode and inject_mode not in _VALID_INJECT_MODES:
+        print(f"  Error: unknown mcp_inject mode '{inject_mode}' for agent '{agent}'.")
+        print(f"  Valid modes: {', '.join(sorted(_VALID_INJECT_MODES))}")
+        sys.exit(1)
+    needs_proxy = inject_mode in ("proxy_flag", "") or not inject_mode
+
+    if needs_proxy:
         from mcp_proxy import McpIdentityProxy
 
-        if agent == "gemini":
+        transport = inject_cfg.get("mcp_transport", "http")
+        if transport == "sse":
             upstream_base = f"http://127.0.0.1:{mcp_cfg.get('sse_port', 8201)}"
             proxy_path = "/sse"
         else:
@@ -336,23 +465,16 @@ def main():
         with _identity_lock:
             return _identity["token"]
 
-    # For Claude: rewrite MCP config when token/name changes (e.g. after 409 re-register).
-    # Claude Code won't re-read mid-session, but the file is correct for next restart.
-    _claude_config_dir = data_dir / "provider-config"
-
-    def _rewrite_claude_config(instance_name: str, token: str):
-        if agent != "claude":
-            return
+    # Rewrite MCP config when token/name changes (e.g. after 409 re-register).
+    # Most CLIs won't re-read mid-session, but the file is correct for next restart.
+    def _rewrite_mcp_config(instance_name: str, new_token: str):
+        if not inject_mode or needs_proxy:
+            return  # proxy-based agents don't have config files to rewrite
         try:
-            http_port = mcp_cfg.get("http_port", 8200)
-            server_url = f"http://127.0.0.1:{http_port}/mcp"
-            proj_dir = (ROOT / cwd).resolve()
-            project_servers = _read_project_mcp_servers(proj_dir)
-            _write_claude_mcp_config(
-                _claude_config_dir / f"{instance_name}-claude-mcp.json",
-                server_url,
-                token=token,
-                project_servers=project_servers,
+            _apply_mcp_inject(
+                inject_cfg, instance_name, data_dir, proxy_url,
+                token=new_token, mcp_cfg=mcp_cfg,
+                project_dir=(ROOT / cwd).resolve(),
             )
         except Exception:
             pass
@@ -380,7 +502,7 @@ def main():
                 print(f"  Identity updated: {old_name} -> {new_name}")
             if new_token and new_token != old_token:
                 print(f"  Session refreshed for @{current_name}")
-            _rewrite_claude_config(current_name, current_token)
+            _rewrite_mcp_config(current_name, current_token)
 
         return changed
 
@@ -399,8 +521,9 @@ def main():
     command = resolved
 
     project_dir = (ROOT / cwd).resolve()
-    launch_args, env, inject_env = _build_provider_launch(
+    launch_args, env, inject_env, mcp_settings_path = _build_provider_launch(
         agent=agent,
+        agent_cfg=agent_cfg,
         instance_name=assigned_name,
         data_dir=data_dir,
         proxy_url=proxy_url,
@@ -412,12 +535,10 @@ def main():
     )
 
     print(f"  === {assigned_name.capitalize()} Chat Wrapper ===")
-    if agent == "claude":
-        http_port = mcp_cfg.get("http_port", 8200)
-        print(f"  MCP: direct to server (port {http_port}) with bearer auth")
-    elif agent == "gemini":
-        sse_port = mcp_cfg.get("sse_port", 8201)
-        print(f"  MCP: direct to server (port {sse_port}/sse) with bearer auth")
+    if not needs_proxy:
+        print(f"  MCP: direct connect ({inject_mode}) with bearer auth")
+        if mcp_settings_path:
+            print(f"  Config: {mcp_settings_path}")
     elif proxy_url:
         print(f"  Local MCP proxy: {proxy_url}")
     print(f"  @{assigned_name} mentions auto-inject MCP reads")

@@ -653,6 +653,7 @@ function appendMessage(msg) {
                 ${isPending ? `
                     <div class="proposal-actions">
                         <button class="proposal-accept" onclick="acceptProposal(${msg.id})">Accept</button>
+                        <button class="proposal-request-changes" onclick="requestChangesProposal(${msg.id})">Request Changes</button>
                         <button class="proposal-dismiss" onclick="dismissProposal(${msg.id})">Dismiss</button>
                     </div>
                 ` : `
@@ -4523,6 +4524,20 @@ async function dismissProposal(msgId) {
         });
     } catch (e) {
         console.error('Failed to demote proposal:', e);
+    }
+}
+
+async function requestChangesProposal(msgId) {
+    // Demote proposal to chat message, then open a reply to it
+    try {
+        await fetch(`/api/messages/${msgId}/demote`, {
+            method: 'POST',
+            headers: { 'X-Session-Token': SESSION_TOKEN },
+        });
+        // Wait briefly for WS edit event to re-render the message as chat
+        setTimeout(() => startReply(msgId), 200);
+    } catch (e) {
+        console.error('Failed to request changes on proposal:', e);
     }
 }
 

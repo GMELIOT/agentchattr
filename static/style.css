@@ -876,7 +876,7 @@ main#timeline {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 100%;
+    max-width: calc(100% - 100px);
 }
 
 .reply-quote:hover {
@@ -2962,6 +2962,19 @@ body.archive-no-select * {
     transition: opacity 0.15s;
 }
 .proposal-accept:hover { opacity: 0.85; }
+
+.proposal-request-changes {
+    background: none;
+    color: var(--text-dim);
+    border: 1px solid var(--accent);
+    padding: 5px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.proposal-request-changes:hover { color: var(--accent); background: rgba(124, 58, 237, 0.08); }
 
 .proposal-dismiss {
     background: none;

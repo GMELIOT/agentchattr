@@ -1378,6 +1378,15 @@ async def post_job_message(job_id: int, request: Request):
     return msg
 
 
+@app.delete("/api/jobs/{job_id}/messages/{msg_id}")
+async def delete_job_message(job_id: int, msg_id: int):
+    """Soft-delete a message in a job thread."""
+    result = jobs.delete_message(job_id, msg_id)
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {"ok": True, **result}
+
+
 @app.post("/api/jobs/{job_id}/messages/{msg_index}/resolve")
 async def resolve_job_message(job_id: int, msg_index: int, request: Request):
     """Resolve a suggestion message (accept/dismiss)."""
@@ -1675,4 +1684,3 @@ async def serve_upload(filename: str):
     if filepath.exists():
         return FileResponse(filepath)
     return JSONResponse({"error": "not found"}, status_code=404)
-

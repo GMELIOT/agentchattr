@@ -1362,6 +1362,18 @@ main#timeline {
     display: none;
 }
 
+
+@media (prefers-reduced-motion: reduce) {
+    @keyframes jobs-slide-in-left {
+        from { opacity: 0; transform: none; }
+        to { opacity: 1; transform: none; }
+    }
+    @keyframes jobs-slide-in-right {
+        from { opacity: 0; transform: none; }
+        to { opacity: 1; transform: none; }
+    }
+}
+
 #jobs-list {
     flex: 1;
     overflow-y: auto;
@@ -1430,7 +1442,18 @@ main#timeline {
     opacity: 1;
 }
 
-.jobs-group-items.hidden { display: none; }
+.jobs-group-items {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.25s ease;
+}
+.jobs-group-items.collapsed {
+    grid-template-rows: 0fr;
+}
+.jobs-group-items-inner {
+    overflow: hidden;
+    min-height: 0;
+}
 
 .jobs-group-items .job-card:last-child { border-bottom: none; }
 
@@ -1766,7 +1789,7 @@ body.archive-no-select * {
 
 .jobs-conv-header {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 8px;
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
@@ -1778,16 +1801,25 @@ body.archive-no-select * {
     background: none;
     border: none;
     color: var(--text-dim);
-    font-size: 18px;
+    font-size: 14px;
     cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 4px;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    order: 1;
 }
 
 .jobs-back-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
 
 .jobs-conv-title {
-    flex: 1;
+    order: 3;
+    flex: 0 0 100%;
+    width: 100%;
     font-size: 13px;
     font-weight: 600;
     color: var(--text);
@@ -1797,7 +1829,7 @@ body.archive-no-select * {
     cursor: text;
     border-radius: 4px;
     padding: 2px 4px;
-    margin: -2px -4px;
+    margin: 0;
 }
 .jobs-conv-title:hover { background: rgba(255,255,255,0.05); }
 
@@ -1817,11 +1849,14 @@ body.archive-no-select * {
 
 .jobs-status-toggles {
     display: flex;
-    gap: 2px;
+    gap: 4px;
     margin-left: auto;
     background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
     padding: 2px;
+    min-height: 24px;
+    align-items: center;
+    order: 2;
 }
 
 .job-toggle {
@@ -1829,12 +1864,18 @@ body.archive-no-select * {
     border: none;
     color: var(--text-dim);
     font-family: inherit;
-    font-size: 10px;
-    font-weight: 500;
-    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0 8px;
+    min-height: 20px;
+    height: 20px;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
 }
 
 .job-toggle:hover {
@@ -1891,6 +1932,17 @@ body.archive-no-select * {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    position: relative;
+    transition: max-height 0.2s ease, opacity 0.2s ease, transform 0.2s ease, padding 0.2s ease;
+    transform-origin: top;
+}
+
+.job-msg.job-msg-removing {
+    opacity: 0;
+    transform: translateY(-4px);
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
 }
 
 .job-msg-header {
@@ -1898,6 +1950,101 @@ body.archive-no-select * {
     align-items: center;
     gap: 6px;
     font-size: 12px;
+    position: relative;
+}
+
+.job-msg-actions {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    background: linear-gradient(to left, var(--bg-header), rgba(20, 20, 31, 0));
+    padding-left: 12px;
+    min-height: 20px;
+}
+
+.job-msg:hover .job-msg-actions,
+.job-msg-actions.confirming {
+    opacity: 1;
+}
+
+.job-msg-actions.confirming .job-msg-delete-label,
+.job-msg-actions.confirming .job-msg-confirm-yes,
+.job-msg-actions.confirming .job-msg-confirm-no {
+    animation: job-msg-confirm-reveal 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.job-msg-actions.confirming .job-msg-confirm-yes {
+    animation-delay: 20ms;
+}
+
+.job-msg-actions.confirming .job-msg-confirm-no {
+    animation-delay: 40ms;
+}
+
+@keyframes job-msg-confirm-reveal {
+    from {
+        opacity: 0;
+        transform: translateX(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.job-msg-del-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 1px 4px;
+}
+
+.job-msg-del-btn:hover {
+    color: var(--error-color);
+    background: rgba(248, 113, 113, 0.1);
+}
+
+.job-msg-delete-label {
+    font-size: 11px;
+    color: var(--error-color);
+    white-space: nowrap;
+}
+
+.job-msg-confirm-yes,
+.job-msg-confirm-no {
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+
+.job-msg-confirm-yes {
+    background: var(--error-color);
+    color: #fff;
+    border: none;
+}
+
+.job-msg-confirm-no {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+}
+
+.job-msg-confirm-no:hover {
+    color: var(--text);
 }
 
 .job-msg-sender {
@@ -1907,6 +2054,7 @@ body.archive-no-select * {
 .job-msg-time {
     color: var(--text-dim);
     font-size: 11px;
+    margin-right: 40px;
 }
 
 .job-msg-text {
@@ -1916,6 +2064,16 @@ body.archive-no-select * {
     min-width: 0;
     word-break: break-word;
     overflow-wrap: anywhere;
+}
+
+.job-msg-text ul,
+.job-msg-text ol {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.job-msg-text li {
+    margin: 2px 0;
 }
 
 .job-msg-text pre {
@@ -2181,6 +2339,11 @@ body.archive-no-select * {
 
 .job-input-row textarea:focus {
     border-color: var(--accent);
+}
+
+.job-input-row textarea.job-starter-prefill {
+    color: var(--text-dim);
+    font-style: italic;
 }
 
 .job-input-row > button:last-child {
@@ -2884,7 +3047,20 @@ body.archive-no-select * {
 /* Proposal cards */
 .message.proposal-msg {
     justify-content: center;
+    align-items: center;
     padding: 8px 16px;
+}
+
+.message.proposal-msg .delete-radio,
+.message.self .delete-radio {
+    top: 50%;
+    transform: translateY(-50%);
+    animation: radio-in-centered 0.2s ease-out both;
+}
+
+@keyframes radio-in-centered {
+    from { opacity: 0; transform: translateY(-50%) scale(0.5); }
+    to { opacity: 1; transform: translateY(-50%) scale(1); }
 }
 
 .proposal-card {
@@ -2936,8 +3112,6 @@ body.archive-no-select * {
     color: var(--text-dim);
     line-height: 1.5;
     margin-bottom: 10px;
-    max-height: 200px;
-    overflow-y: auto;
 }
 
 .proposal-body p { margin: 0 0 6px; }

@@ -36,7 +36,7 @@ def main():
     configure(config, session_token=session_token)
 
     # Share stores with the MCP bridge
-    from app import store, decisions, summaries, jobs, room_settings, registry
+    from app import store, decisions, summaries, jobs, room_settings, registry, router as app_router, agents as app_agents
     import mcp_bridge
     mcp_bridge.store = store
     mcp_bridge.decisions = decisions
@@ -45,6 +45,8 @@ def main():
     mcp_bridge.room_settings = room_settings
     mcp_bridge.registry = registry
     mcp_bridge.config = config
+    mcp_bridge.router = app_router
+    mcp_bridge.agents = app_agents
 
     # Enable cursor and role persistence across restarts
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")

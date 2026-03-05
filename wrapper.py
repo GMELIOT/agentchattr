@@ -359,7 +359,7 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                     if custom_prompt:
                         prompt = custom_prompt
                     elif job_id:
-                        prompt = f"mcp read job_id={job_id} - you were mentioned in an activity, take appropriate action"
+                        prompt = f"mcp read job_id={job_id} - you were mentioned in a job thread, take appropriate action"
                     else:
                         prompt = f"mcp read #{channel} - you were mentioned, take appropriate action"
 

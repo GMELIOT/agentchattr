@@ -24,6 +24,8 @@ jobs = None  # set by run.py — JobStore instance
 room_settings = None  # set by run.py — dict with "channels" list etc.
 registry = None       # set by run.py — RuntimeRegistry instance
 config = None         # set by run.py — full config.toml dict
+router = None         # set by run.py — Router instance
+agents = None         # set by run.py — AgentManager instance
 _presence: dict[str, float] = {}
 _activity: dict[str, bool] = {}   # True = screen changed on last poll
 _activity_ts: dict[str, float] = {}  # timestamp of last active=True heartbeat
@@ -243,6 +245,30 @@ def chat_send(
             return f"Error: job #{job_id} not found."
         with _presence_lock:
             _presence[sender] = time.time()
+
+        # Route @mentions in job messages to trigger other agents
+        if router and agents:
+            job = jobs.get(job_id)
+            if job:
+                job_channel = job.get("channel", "general")
+                raw_targets = router.get_targets(sender, text, job_channel)
+                targets = []
+                for t in raw_targets:
+                    if registry:
+                        targets.extend(registry.resolve_to_instances(t))
+                    else:
+                        targets.append(t)
+                targets = list(dict.fromkeys(targets))
+                chat_msg = f"{sender}: {text}" if text else ""
+                for target in targets:
+                    if registry:
+                        inst = registry.get_instance(target)
+                        if inst and inst.get("state") == "pending":
+                            continue
+                    if agents.is_available(target):
+                        agents.trigger_sync(target, message=chat_msg,
+                                            channel=job_channel, job_id=job_id)
+
         return f"Sent to job #{job_id} (msg_id={msg['id']})" + (
             " [suggestion]" if msg_type == "suggestion" else "")
 

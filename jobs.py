@@ -74,7 +74,7 @@ class JobStore:
 
     def on_change(self, callback):
         """Register a callback(action, job) on any change.
-        action: 'create', 'update', 'message'."""
+        action: 'create', 'update', 'message', 'message_delete'."""
         self._callbacks.append(callback)
 
     def _fire(self, action: str, job: dict):
@@ -221,6 +221,40 @@ class JobStore:
                 if a["id"] == job_id:
                     return list(a["messages"])
             return None
+
+    def delete_message(self, job_id: int, msg_id: int) -> dict | None:
+        """Soft-delete a message from a job conversation by message id."""
+        with self._lock:
+            for a in self._jobs:
+                if a["id"] != job_id:
+                    continue
+                msgs = a.get("messages", [])
+                hit = None
+                for i, m in enumerate(msgs):
+                    try:
+                        mid = int(m.get("id", -1))
+                    except (TypeError, ValueError):
+                        mid = -1
+                    if mid == msg_id:
+                        hit = (i, m)
+                        break
+                if hit is None:
+                    return None
+                _, msg = hit
+                if msg.get("deleted"):
+                    return {"job_id": job_id, "message_id": msg_id}
+                msg["deleted"] = True
+                msg["text"] = ""
+                msg["attachments"] = []
+                msg["updated_at"] = time.time()
+                a["updated_at"] = time.time()
+                self._save()
+                payload = {"job_id": job_id, "message_id": msg_id}
+                break
+            else:
+                return None
+        self._fire("message_delete", payload)
+        return payload
 
     def delete(self, job_id: int) -> dict | None:
         """Permanently delete a job."""

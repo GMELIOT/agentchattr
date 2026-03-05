@@ -31,6 +31,7 @@ let pendingDeleteJobId = null;
 let archiveDeleteBatchIds = null; // Set<number> while client-side archive delete animation is active
 let jobReorderMute = null; // { ids:Set<number>, channel, status, until:number, suppressed:boolean }
 let jobReorderMuteTimer = null;
+let _jobViewSwitching = false;
 
 // --- Drag-scroll for overflow containers ---
 function enableDragScroll(el) {
@@ -659,7 +660,8 @@ function appendMessage(msg) {
                 ` : `
                     <div class="proposal-status-resolved">${status === 'accepted' ? 'Accepted' : 'Dismissed'}</div>
                 `}
-            </div>`;
+            </div>
+            ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
     } else if (msg.type === 'job_created') {
         el.classList.add('system-msg', 'job-breadcrumb');
         const actId = msg.metadata?.job_id;
@@ -1264,6 +1266,19 @@ function showBubbleRolePicker(btn, agentName) {
     }, 0);
 }
 
+function _syncBubbleRolePills(agentName) {
+    const role = String(_agentRoles[agentName] || '').trim();
+    const pillText = role || 'choose a role';
+    document.querySelectorAll('.message').forEach(msg => {
+        const senderEl = msg.querySelector('.msg-sender');
+        const btn = msg.querySelector('.bubble-role');
+        if (!btn || !senderEl || senderEl.textContent !== agentName) return;
+        btn.textContent = pillText;
+        btn.title = role || 'Set role';
+        btn.classList.toggle('has-role', !!role);
+    });
+}
+
 function _setRole(agentName, role) {
     fetch(`/api/roles/${agentName}`, {
         method: 'POST',
@@ -1272,17 +1287,7 @@ function _setRole(agentName, role) {
     });
     // Optimistic update
     _agentRoles[agentName] = role;
-    // Update all bubble-role buttons for this sender
-    const pillText = role || 'choose a role';
-    document.querySelectorAll('.message').forEach(msg => {
-        const senderEl = msg.querySelector('.msg-sender');
-        const btn = msg.querySelector('.bubble-role');
-        if (btn && senderEl && senderEl.textContent === agentName) {
-            btn.textContent = pillText;
-            btn.title = role || 'Set role';
-            btn.classList.toggle('has-role', !!role);
-        }
-    });
+    _syncBubbleRolePills(agentName);
 }
 
 // --- Status ---
@@ -1292,6 +1297,9 @@ const _agentRoles = {};  // name → role string
 function fetchRoles() {
     fetch('/api/roles').then(r => r.json()).then(roles => {
         Object.assign(_agentRoles, roles);
+        for (const name of Object.keys(roles || {})) {
+            _syncBubbleRolePills(name);
+        }
     }).catch(() => {});
 }
 
@@ -1324,6 +1332,7 @@ function updateStatus(data) {
         // Track role (displayed on bubbles, not on pill)
         if (info.role !== undefined) {
             _agentRoles[name] = info.role;
+            _syncBubbleRolePills(name);
         }
     }
 }
@@ -2712,7 +2721,7 @@ let modalImages = [];  // all image URLs in chat
 let modalIndex = 0;    // current image index
 
 function getAllChatImages() {
-    const imgs = document.querySelectorAll('.msg-attachments img');
+    const imgs = document.querySelectorAll('.msg-attachments img, .job-msg-attachments img');
     return [...imgs].map(img => img.src);
 }
 
@@ -2916,6 +2925,18 @@ function toggleDecisionsPanel() {
 function renderDecisionsPanel() {
     const list = document.getElementById('decisions-list');
     if (!list) return;
+    // Preserve in-progress create form across re-renders (save focus state)
+    const activeForm = list.querySelector('.job-create-form');
+    let savedForm = null, savedFocusSelector = null, savedSelStart = 0, savedSelEnd = 0;
+    if (activeForm) {
+        const focused = document.activeElement;
+        if (focused && activeForm.contains(focused)) {
+            savedFocusSelector = focused.tagName.toLowerCase() + (focused.className ? '.' + focused.className.split(' ')[0] : '');
+            savedSelStart = focused.selectionStart || 0;
+            savedSelEnd = focused.selectionEnd || 0;
+        }
+        savedForm = activeForm.parentNode.removeChild(activeForm);
+    }
     list.innerHTML = '';
 
     // Update counter
@@ -2931,6 +2952,13 @@ function renderDecisionsPanel() {
         `;
         ghost.onclick = () => showCreateDecision();
         list.appendChild(ghost);
+        if (savedForm) {
+            list.prepend(savedForm);
+            if (savedFocusSelector) {
+                const el = savedForm.querySelector(savedFocusSelector);
+                if (el) { el.focus(); try { el.setSelectionRange(savedSelStart, savedSelEnd); } catch {} }
+            }
+        }
         return;
     }
 
@@ -2983,6 +3011,15 @@ function renderDecisionsPanel() {
     }
 
     if (hint) list.insertAdjacentHTML('beforeend', hint);
+
+    // Re-insert preserved create form at top and restore focus
+    if (savedForm) {
+        list.prepend(savedForm);
+        if (savedFocusSelector) {
+            const el = savedForm.querySelector(savedFocusSelector);
+            if (el) { el.focus(); try { el.setSelectionRange(savedSelStart, savedSelEnd); } catch {} }
+        }
+    }
 }
 
 function updateDecisionsBadge() {
@@ -3441,13 +3478,26 @@ function toggleJobsPanel() {
     });
 }
 
-function showJobsListView() {
+function _animateJobViewSwitch(exitView, enterView, direction, onDone) {
+    // No animation — instant swap
+    if (exitView) exitView.classList.add('hidden');
+    if (enterView) enterView.classList.remove('hidden');
+    if (onDone) onDone();
+}
+
+function showJobsListView(onDone) {
     const listView = document.getElementById('jobs-list-view');
     const convView = document.getElementById('jobs-conversation-view');
-    listView.classList.remove('hidden');
-    convView.classList.add('hidden');
     activeJobId = null;
     updateJobReplyTargetUI();
+    if (!convView.classList.contains('hidden')) {
+        _animateJobViewSwitch(convView, listView, 'back', onDone);
+    } else {
+        listView.classList.remove('hidden');
+        convView.classList.add('hidden');
+        _jobViewSwitching = false;
+        if (onDone) onDone();
+    }
 }
 
 const _expandedGroups = new Set(['open']); // track which collapsible groups are open across re-renders
@@ -3618,12 +3668,19 @@ function _flipRenderJobs() {
 function renderJobsList() {
     const list = document.getElementById('jobs-list');
     if (!list) return;
-    console.log('CLEAR_DEBUG renderJobsList called', 'jobsData.length=' + jobsData.length, 'activeChannel=' + activeChannel, new Error().stack.split('\n').slice(1, 4).join(' <- '));
+    // Preserve in-progress create form across re-renders (save focus state)
+    const activeForm = list.querySelector('.job-create-form');
+    let savedForm = null, savedFocusSelector = null, savedSelStart = 0, savedSelEnd = 0;
+    if (activeForm) {
+        const focused = document.activeElement;
+        if (focused && activeForm.contains(focused)) {
+            savedFocusSelector = focused.tagName.toLowerCase() + (focused.className ? '.' + focused.className.split(' ')[0] : '');
+            savedSelStart = focused.selectionStart || 0;
+            savedSelEnd = focused.selectionEnd || 0;
+        }
+        savedForm = activeForm.parentNode.removeChild(activeForm);
+    }
     list.innerHTML = '';
-
-    // Update counter in header if it exists
-    const counter = document.getElementById('jobs-counter');
-    if (counter) counter.textContent = `${jobsData.length}`;
 
     // Jobs are global — show all regardless of channel
     const channelJobs = jobsData;
@@ -3671,7 +3728,7 @@ function renderJobsList() {
             header.onclick = () => {
                 header.classList.toggle('collapsed');
                 const container = header.nextElementSibling;
-                if (container) container.classList.toggle('hidden');
+                if (container) container.classList.toggle('collapsed');
                 if (header.classList.contains('collapsed')) {
                     _expandedGroups.delete(group.key);
                 } else {
@@ -3712,9 +3769,11 @@ function renderJobsList() {
 
         list.appendChild(header);
 
-        // Wrap group items in a container for collapsing
+        // Wrap group items in a container for collapsing (CSS grid animation)
         const itemsContainer = document.createElement('div');
-        itemsContainer.className = 'jobs-group-items' + (isCollapsed ? ' hidden' : '');
+        itemsContainer.className = 'jobs-group-items' + (isCollapsed ? ' collapsed' : '');
+        const itemsInner = document.createElement('div');
+        itemsInner.className = 'jobs-group-items-inner';
 
         for (const a of group.items) {
             const card = document.createElement('div');
@@ -3723,7 +3782,7 @@ function renderJobsList() {
             card.onclick = () => openJobConversation(a.id);
             card.addEventListener('selectstart', (e) => e.preventDefault());
 
-            const msgCount = (a.messages || []).length;
+            const msgCount = (a.messages || []).filter(m => !m?.deleted).length;
             const unread = jobUnread[a.id] || 0;
 
             const unreadHtml = unread > 0
@@ -3845,7 +3904,7 @@ function renderJobsList() {
                 };
             }
 
-            itemsContainer.appendChild(card);
+            itemsInner.appendChild(card);
         }
 
         itemsContainer.addEventListener('dragover', (e) => {
@@ -3880,7 +3939,7 @@ function renderJobsList() {
             });
 
             // Drag-and-drop support
-            trashZone.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; trashZone.classList.add('hover'); });
+            trashZone.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; trashZone.classList.add('hover'); _clearJobReorderTargets(itemsInner); });
             trashZone.addEventListener('dragleave', () => { trashZone.classList.remove('hover'); });
             trashZone.addEventListener('drop', async (e) => {
                 e.preventDefault();
@@ -3893,10 +3952,23 @@ function renderJobsList() {
                 await deleteArchiveIds(ids, trashZone);
             });
 
-            itemsContainer.appendChild(trashZone);
+            itemsInner.appendChild(trashZone);
         }
 
+        itemsContainer.appendChild(itemsInner);
         list.appendChild(itemsContainer);
+    }
+
+    // Re-insert preserved create form at top and restore focus
+    if (savedForm) {
+        list.prepend(savedForm);
+        if (savedFocusSelector) {
+            const el = savedForm.querySelector(savedFocusSelector);
+            if (el) {
+                el.focus();
+                try { el.setSelectionRange(savedSelStart, savedSelEnd); } catch {}
+            }
+        }
     }
 }
 
@@ -3906,11 +3978,10 @@ async function openJobConversation(jobId) {
     activeJobId = jobId;
     markJobRead(jobId);
 
-    // Switch views
-    document.getElementById('jobs-list-view').classList.add('hidden');
+    const listView = document.getElementById('jobs-list-view');
     const convView = document.getElementById('jobs-conversation-view');
-    convView.classList.remove('hidden');
 
+    // Prepare content while conv view is still hidden
     // Set header — click to edit title inline
     const titleEl = document.getElementById('jobs-conv-title');
     titleEl.textContent = job.title;
@@ -3920,7 +3991,6 @@ async function openJobConversation(jobId) {
     // Render unified brief card header
     let briefEl = convView.querySelector('.job-brief-card');
     if (briefEl) briefEl.remove();
-    // Also clean up legacy elements
     let legacyBody = convView.querySelector('.job-body-brief');
     if (legacyBody) legacyBody.remove();
     let legacyPinned = convView.querySelector('.job-pinned-msg');
@@ -3934,14 +4004,40 @@ async function openJobConversation(jobId) {
         messagesContainer.parentNode.insertBefore(briefEl, messagesContainer);
     }
 
-    // Load messages
+    // Load messages before showing the view
     const messages = await loadJobMessages(jobId);
     const target = resolveJobDefaultRecipient(job, messages);
     if (target) jobReplyTargets[jobId] = target;
     updateJobReplyTargetUI();
 
-    // Focus input
-    document.getElementById('jobs-conv-input-text').focus();
+    // Switch views — instant swap (animation deferred to future Motion Guard impl)
+    listView.classList.add('hidden');
+    convView.classList.remove('hidden');
+
+    // Pre-fill starter text for empty jobs
+    const jobInput = document.getElementById('jobs-conv-input-text');
+    const msgCount = (job.messages || []).filter(m => !m?.deleted).length;
+    if (msgCount === 0 && target) {
+        const starterText = `@${target} start this job`;
+        jobInput.value = starterText;
+        jobInput.placeholder = 'Send to assign · click to edit';
+        jobInput.classList.add('job-starter-prefill');
+        const clearStarter = () => {
+            if (jobInput.classList.contains('job-starter-prefill')) {
+                jobInput.value = '';
+                jobInput.placeholder = 'Message...';
+                jobInput.classList.remove('job-starter-prefill');
+            }
+            jobInput.removeEventListener('focus', clearStarter);
+            jobInput.removeEventListener('click', clearStarter);
+        };
+        jobInput.addEventListener('focus', clearStarter);
+        jobInput.addEventListener('click', clearStarter);
+    } else {
+        jobInput.placeholder = 'Message...';
+        jobInput.classList.remove('job-starter-prefill');
+        jobInput.focus();
+    }
 }
 
 async function loadJobMessages(jobId) {
@@ -3954,19 +4050,20 @@ async function loadJobMessages(jobId) {
         });
         if (!resp.ok) return [];
         const msgs = await resp.json();
+        const visibleMsgs = msgs.filter(msg => !msg?.deleted);
 
-        if (msgs.length === 0) {
+        if (visibleMsgs.length === 0) {
             // Only show empty state if there's no brief card either
             const convView = document.getElementById('jobs-conversation-view');
             const hasBrief = !!convView.querySelector('.job-brief-card');
             if (!hasBrief) {
                 container.innerHTML = '<div class="jobs-empty" style="font-size:12px; padding:16px">No messages yet. Start the conversation!</div>';
             }
-            return [];
+            return msgs;
         }
 
         // Render all messages in the scrollable area
-        for (const msg of msgs) {
+        for (const msg of visibleMsgs) {
             appendJobMessage(msg);
         }
 
@@ -3978,13 +4075,115 @@ async function loadJobMessages(jobId) {
     }
 }
 
+const _jobMsgDeleteTimers = new Map();
+function _clearJobMsgDeleteTimer(jobId, msgId) {
+    const key = `${jobId}:${msgId}`;
+    const timer = _jobMsgDeleteTimers.get(key);
+    if (timer) clearTimeout(timer);
+    _jobMsgDeleteTimers.delete(key);
+}
+
+function _animateRemoveJobMessage(msgEl) {
+    if (!msgEl || msgEl.dataset.removing === '1') {
+        if (msgEl) msgEl?.remove?.();
+        return;
+    }
+    msgEl.dataset.removing = '1';
+    const h = msgEl.offsetHeight || 0;
+    msgEl.style.maxHeight = `${h}px`;
+    msgEl.style.overflow = 'hidden';
+    msgEl.style.willChange = 'max-height, opacity, transform, margin, padding';
+    requestAnimationFrame(() => {
+        msgEl.classList.add('job-msg-removing');
+        msgEl.style.maxHeight = '0px';
+    });
+    const cleanup = () => {
+        msgEl.removeEventListener('transitionend', cleanup);
+        msgEl.remove();
+    };
+    msgEl.addEventListener('transitionend', cleanup);
+    setTimeout(cleanup, 240);
+}
+
+function _renderJobMsgDeleteDefault(actions, jobId, msgId) {
+    if (!actions) return;
+    actions.classList.remove('confirming');
+    actions.innerHTML = `<button class="job-msg-del-btn" onclick="startDeleteJobMessage(${jobId}, ${msgId})">DEL</button>`;
+}
+
+function startDeleteJobMessage(jobId, msgId, event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const selector = `.job-msg[data-msg-id="${msgId}"]`;
+    const msgEl = document.querySelector(selector);
+    const actions = msgEl?.querySelector('.job-msg-actions');
+    if (!actions) return;
+
+    document.querySelectorAll('.job-msg-actions.confirming').forEach((el) => {
+        const parent = el.closest('.job-msg');
+        const priorId = Number(parent?.dataset.msgId || NaN);
+        if (Number.isFinite(priorId) && priorId !== Number(msgId)) {
+            _clearJobMsgDeleteTimer(jobId, priorId);
+            _renderJobMsgDeleteDefault(el, jobId, priorId);
+        }
+    });
+
+    actions.classList.add('confirming');
+    actions.innerHTML = `
+        <span class="job-msg-delete-label">Delete?</span>
+        <button class="job-msg-confirm-yes" onclick="confirmDeleteJobMessage(${jobId}, ${msgId})">Yes</button>
+        <button class="job-msg-confirm-no" onclick="cancelDeleteJobMessage(${jobId}, ${msgId})">No</button>
+    `;
+    _clearJobMsgDeleteTimer(jobId, msgId);
+    const key = `${jobId}:${msgId}`;
+    _jobMsgDeleteTimers.set(key, setTimeout(() => {
+        cancelDeleteJobMessage(jobId, msgId);
+    }, 4000));
+}
+
+async function confirmDeleteJobMessage(jobId, msgId, event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    _clearJobMsgDeleteTimer(jobId, msgId);
+    try {
+        const resp = await fetch(`/api/jobs/${jobId}/messages/${msgId}`, {
+            method: 'DELETE',
+            headers: { 'X-Session-Token': SESSION_TOKEN },
+        });
+        if (!resp.ok) {
+            cancelDeleteJobMessage(jobId, msgId);
+            return;
+        }
+        const msgEl = document.querySelector(`.job-msg[data-msg-id="${msgId}"]`);
+        _animateRemoveJobMessage(msgEl);
+    } catch (err) {
+        console.error('Failed to delete job message:', err);
+        cancelDeleteJobMessage(jobId, msgId);
+    }
+}
+
+function cancelDeleteJobMessage(jobId, msgId, event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    _clearJobMsgDeleteTimer(jobId, msgId);
+    const msgEl = document.querySelector(`.job-msg[data-msg-id="${msgId}"]`);
+    const actions = msgEl?.querySelector('.job-msg-actions');
+    _renderJobMsgDeleteDefault(actions, jobId, msgId);
+}
+
 function appendJobMessage(msg) {
     const container = document.getElementById('jobs-conv-messages');
-    if (!container) return;
+    if (!container || msg?.deleted) return;
 
     const div = document.createElement('div');
     div.className = 'job-msg' + (msg.type === 'suggestion' ? ' job-suggestion' : '');
+    div.dataset.msgId = String(msg.id ?? '');
     const senderColor = getColor(msg.sender);
+    const msgId = Number(msg.id);
+    const canDelete = Number.isFinite(msgId);
+    const deleteActionHtml = canDelete
+        ? `<div class="job-msg-actions"><button class="job-msg-del-btn" onclick="startDeleteJobMessage(${activeJobId}, ${msgId})">DEL</button></div>`
+        : '';
 
     if (msg.type === 'suggestion') {
         const resolved = msg.resolved;
@@ -3993,6 +4192,7 @@ function appendJobMessage(msg) {
                 <span class="suggestion-pill">Suggestion</span>
                 <span class="job-msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span>
                 <span class="job-msg-time">${msg.time || ''}</span>
+                ${deleteActionHtml}
             </div>
             <div class="job-msg-text">${renderMarkdown(msg.text)}</div>
             <div class="suggestion-actions">${resolved
@@ -4013,6 +4213,7 @@ function appendJobMessage(msg) {
             <div class="job-msg-header">
                 <span class="job-msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span>
                 <span class="job-msg-time">${msg.time || ''}</span>
+                ${deleteActionHtml}
             </div>
             ${msg.text ? `<div class="job-msg-text">${renderMarkdown(msg.text)}</div>` : ''}
             ${attHtml}
@@ -4235,8 +4436,9 @@ async function submitCreateJob(btn) {
 }
 
 function jobsBack() {
-    showJobsListView();
-    renderJobsList();
+    showJobsListView(() => {
+        renderJobsList();
+    });
 }
 
 function handleJobEvent(action, data) {
@@ -4295,6 +4497,31 @@ function handleJobEvent(action, data) {
         } else if (!isSelfMessage) {
             jobUnread[data.job_id] = (jobUnread[data.job_id] || 0) + 1;
         }
+    } else if (action === 'message_delete') {
+        // data = { job_id, message_id }
+        const job = jobsData.find(a => a.id === data.job_id);
+        if (job && Array.isArray(job.messages)) {
+            const hit = job.messages.find(m => Number(m.id) === Number(data.message_id));
+            if (hit) {
+                hit.deleted = true;
+                hit.text = '';
+                hit.attachments = [];
+            }
+        }
+        const panel = document.getElementById('jobs-panel');
+        const convView = document.getElementById('jobs-conversation-view');
+        const isViewingThis = Boolean(
+            panel &&
+            !panel.classList.contains('hidden') &&
+            convView &&
+            !convView.classList.contains('hidden') &&
+            activeJobId === data.job_id
+        );
+        if (isViewingThis) {
+            const msgEl = document.querySelector(`.job-msg[data-msg-id="${data.message_id}"]`);
+            _animateRemoveJobMessage(msgEl);
+            markJobRead(data.job_id);
+        }
     } else if (action === 'delete') {
         jobsData = jobsData.filter(a => a.id !== data.id);
         delete jobUnread[data.id];
@@ -4315,12 +4542,10 @@ function handleJobEvent(action, data) {
         }
     }
     updateJobsBadge();
-    // Keep counter in sync
-    const jobsCounter = document.getElementById('jobs-counter');
-    if (jobsCounter) jobsCounter.textContent = `${jobsData.length}`;
     // Re-render list if visible
     const panel = document.getElementById('jobs-panel');
     if (panel && !panel.classList.contains('hidden') && !activeJobId) {
+        if (_jobViewSwitching) return;
         if (action === 'delete' && archiveDeleteBatchIds && archiveDeleteBatchIds.has(Number(data.id))) {
             return;
         }
@@ -4520,7 +4745,14 @@ async function acceptProposal(msgId) {
             const panel = document.getElementById('jobs-panel');
             if (panel.classList.contains('hidden')) toggleJobsPanel();
             // Small delay to let WS event populate jobsData
-            setTimeout(() => openJobConversation(job.id), 200);
+            setTimeout(() => {
+                openJobConversation(job.id);
+                // Set reply target to the proposing agent
+                if (proposalSender) {
+                    jobReplyTargets[job.id] = proposalSender;
+                    updateJobReplyTargetUI();
+                }
+            }, 200);
         }
     } catch (e) {
         console.error('Failed to accept proposal:', e);

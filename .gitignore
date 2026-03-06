@@ -16,3 +16,4 @@ build/
 .idea/
 .gemini/
 .claude/
+tests/

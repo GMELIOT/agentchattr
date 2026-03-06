@@ -12,7 +12,7 @@ let username = 'user';
 let agentConfig = {};  // { name: { color, label } } — registered instances (used for pills)
 let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
 let todos = {};  // { msg_id: "todo" | "done" }
-let decisions = [];  // array of decision objects from server
+let rules = [];  // array of rule objects from server
 let activeMentions = new Set();  // agent names with pre-@ toggled on
 let replyingTo = null;  // { id, sender, text } or null
 let unreadCount = 0;    // messages received while scrolled up
@@ -173,8 +173,8 @@ function init() {
     setupScroll();
     setupSettingsKeys();
     setupKeyboardShortcuts();
-    setupDecisionForm();
-    setupDecisionGrip();
+    setupRuleForm();
+    setupRulesGrip();
     setupJobsGrip();
     setupJobsInput();
     setupJobMentions();
@@ -400,12 +400,12 @@ function connectWebSocket() {
             applySettings(event.data);
         } else if (event.type === 'delete') {
             handleDeleteBroadcast(event.ids);
-        } else if (event.type === 'decisions') {
-            decisions = event.data || [];
-            renderDecisionsPanel();
-            updateDecisionsBadge();
-        } else if (event.type === 'decision') {
-            handleDecisionEvent(event.action, event.data);
+        } else if (event.type === 'rules' || event.type === 'decisions') {
+            rules = event.data || [];
+            renderRulesPanel();
+            updateRulesBadge();
+        } else if (event.type === 'rule' || event.type === 'decision') {
+            handleRuleEvent(event.action, event.data);
         } else if (event.type === 'hats') {
             agentHats = event.data || {};
             updateAllHats();
@@ -659,6 +659,31 @@ function appendMessage(msg) {
                     </div>
                 ` : `
                     <div class="proposal-status-resolved">${status === 'accepted' ? 'Accepted' : 'Dismissed'}</div>
+                `}
+            </div>
+            ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
+    } else if (msg.type === 'rule_proposal') {
+        el.classList.add('proposal-msg');
+        const meta = msg.metadata || {};
+        const ruleText = escapeHtml(meta.text || msg.text || '');
+        const color = getColor(msg.sender);
+        const status = meta.status || 'pending';
+        const isPending = status === 'pending';
+        el.innerHTML = `
+            <div class="proposal-card rule-proposal-card ${isPending ? '' : 'proposal-resolved'}">
+                <div class="proposal-header">
+                    <span class="proposal-pill rule-proposal-pill">Rule Proposal</span>
+                    <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
+                </div>
+                <div class="rule-proposal-text">${ruleText}</div>
+                ${isPending ? `
+                    <div class="proposal-actions">
+                        <button class="proposal-accept" onclick="resolveRuleProposal(${msg.id}, 'activate')">Activate</button>
+                        <button class="proposal-request-changes" onclick="resolveRuleProposal(${msg.id}, 'draft')">Add to drafts</button>
+                        <button class="proposal-dismiss" onclick="dismissRuleProposal(${msg.id})">Dismiss</button>
+                    </div>
+                ` : `
+                    <div class="proposal-status-resolved">${status === 'activated' ? 'Activated' : status === 'drafted' ? 'Added to drafts' : 'Dismissed'}</div>
                 `}
             </div>
             ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
@@ -2780,7 +2805,8 @@ function closeImageModal() {
 
 // --- Auto-grow textarea helper ---
 
-const DECISION_MAX_CHARS = 80;
+const RULE_MAX_CHARS = 160;
+const RULE_REASON_MAX_CHARS = 240;
 
 function autoGrowTextarea(el) {
     el.style.height = 'auto';
@@ -2795,16 +2821,16 @@ function setupCharCounter(textareaId, counterId) {
     function update() {
         autoGrowTextarea(ta);
         const len = ta.value.length;
-        counter.textContent = `${len}/${DECISION_MAX_CHARS}`;
-        counter.classList.toggle('over', len >= DECISION_MAX_CHARS);
+        counter.textContent = `${len}/${RULE_MAX_CHARS}`;
+        counter.classList.toggle('over', len >= RULE_MAX_CHARS);
     }
     ta.addEventListener('input', update);
     update();
 }
 
-function setupDecisionGrip() {
-    const grip = document.getElementById('decisions-grip');
-    const panel = document.getElementById('decisions-panel');
+function setupRulesGrip() {
+    const grip = document.getElementById('rules-grip');
+    const panel = document.getElementById('rules-panel');
     if (!grip || !panel) return;
 
     let dragging = false;
@@ -2841,23 +2867,24 @@ function setupDecisionGrip() {
     });
 }
 
-function setupDecisionForm() {
-    // Form is now inline via showCreateDecision(), no persistent elements to set up
+function setupRuleForm() {
+    // Form is now inline via showCreateRule(), no persistent elements to set up
 }
 
-// --- Decisions ---
+// --- Rules ---
 
-function handleDecisionEvent(action, decision) {
+function handleRuleEvent(action, rule) {
     if (action === 'propose') {
-        decisions.push(decision);
-    } else if (action === 'approve' || action === 'edit') {
-        const idx = decisions.findIndex(d => d.id === decision.id);
-        if (idx >= 0) decisions[idx] = decision;
+        rules.push(rule);
+    } else if (['activate', 'deactivate', 'edit', 'approve'].includes(action)) {
+        const idx = rules.findIndex(r => r.id === rule.id);
+        if (idx >= 0) rules[idx] = rule;
     } else if (action === 'delete') {
-        decisions = decisions.filter(d => d.id !== decision.id);
+        rules = rules.filter(r => r.id !== rule.id);
+        _seenRuleIds.delete(rule.id);
     }
-    renderDecisionsPanel();
-    updateDecisionsBadge();
+    renderRulesPanel();
+    updateRulesBadge();
 }
 
 async function _preserveScroll(fn) {
@@ -2911,21 +2938,49 @@ async function _preserveScroll(fn) {
     requestAnimationFrame(tick);
 }
 
-function toggleDecisionsPanel() {
+function toggleRulesPanel() {
     _preserveScroll(() => {
-        const panel = document.getElementById('decisions-panel');
+        const panel = document.getElementById('rules-panel');
         panel.classList.toggle('hidden');
-        document.getElementById('decisions-toggle').classList.toggle('active', !panel.classList.contains('hidden'));
+        document.getElementById('rules-toggle').classList.toggle('active', !panel.classList.contains('hidden'));
         if (!panel.classList.contains('hidden')) {
-            renderDecisionsPanel();
+            // Mark all current drafts as seen
+            for (const r of rules) {
+                if (r.status === 'proposed' || r.status === 'draft') _seenRuleIds.add(r.id);
+            }
+            updateRulesBadge();
+            renderRulesPanel();
         }
     });
 }
 
-function renderDecisionsPanel() {
-    const list = document.getElementById('decisions-list');
+function remindAgents() {
+    const btn = document.querySelector('.rules-remind-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/rules/remind', { method: 'POST', headers: { 'X-Session-Token': SESSION_TOKEN } })
+        .then(r => r.json())
+        .then(() => {
+            if (btn) {
+                const orig = btn.textContent;
+                btn.textContent = 'Queued — next trigger';
+                setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2500);
+            }
+        })
+        .catch(err => {
+            console.error('remind failed', err);
+            if (btn) btn.disabled = false;
+        });
+}
+
+let _rulesArchivedExpanded = false;
+let _draggedRuleId = null;
+let _seenRuleIds = new Set();
+
+function renderRulesPanel() {
+    const list = document.getElementById('rules-list');
     if (!list) return;
-    // Preserve in-progress create form across re-renders (save focus state)
+
+    // Preserve in-progress create form across re-renders
     const activeForm = list.querySelector('.job-create-form');
     let savedForm = null, savedFocusSelector = null, savedSelStart = 0, savedSelEnd = 0;
     if (activeForm) {
@@ -2939,19 +2994,29 @@ function renderDecisionsPanel() {
     }
     list.innerHTML = '';
 
-    // Update counter
-    const counter = document.getElementById('decisions-counter');
-    if (counter) counter.textContent = `${decisions.length}/30`;
+    const normalize = (s) => s === 'proposed' ? 'draft' : (s === 'approved' ? 'active' : (s || 'draft'));
+    // Filter out pending rules — they only exist as proposal cards in the timeline
+    const panelRules = rules.filter(r => r.status !== 'pending');
+    const activeCount = panelRules.filter(r => normalize(r.status) === 'active').length;
 
-    if (decisions.length === 0) {
+    // Update header counter
+    const counter = document.getElementById('rules-counter');
+    if (counter) counter.textContent = `${activeCount}/10`;
+
+    if (panelRules.length === 0) {
         const ghost = document.createElement('div');
         ghost.className = 'sb-ghost-card';
         ghost.innerHTML = `
-            <div class="sb-ghost-title">Make your first decision</div>
-            <div class="sb-ghost-meta">Architectural rules, naming conventions, workflow agreements.</div>
+            <div class="sb-ghost-title">No rules yet</div>
+            <div class="sb-ghost-meta">Tell your agents how to work</div>
         `;
-        ghost.onclick = () => showCreateDecision();
+        ghost.onclick = () => showCreateRule();
         list.appendChild(ghost);
+        // Centered helper text
+        const helper = document.createElement('div');
+        helper.className = 'rules-centered-hint';
+        helper.textContent = 'New rules are sent on the next agent trigger';
+        list.appendChild(helper);
         if (savedForm) {
             list.prepend(savedForm);
             if (savedFocusSelector) {
@@ -2962,57 +3027,141 @@ function renderDecisionsPanel() {
         return;
     }
 
-    // Newest first, no status grouping so toggling doesn't reorder
-    const sorted = [...decisions].sort((a, b) => b.id - a.id);
-
-    for (let i = 0; i < sorted.length; i++) {
-        const d = sorted[i];
-        const displayNum = sorted.length - i;
-        const card = document.createElement('div');
-        card.className = 'decision-card';
-        card.dataset.id = d.id;
-
-        const reasonHtml = d.reason
-            ? `<div class="decision-reason">${escapeHtml(d.reason)}</div>`
-            : '';
-
-        const debateIcon = `<button class="debate-btn" onclick="debateDecision(${d.id})" title="Debate">debate</button>`;
-
-        const editIcon = `<button class="edit-btn" onclick="editDecision(${d.id})" title="Edit"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>`;
-
-        const trashIcon = `<button class="delete-btn" onclick="startDeleteDecision(${d.id})" title="Delete"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M6 4V3h4v1M5 4v8.5h6V4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
-
-        // Color the owner like they appear in chat
-        const ownerKey = (d.owner || 'user').toLowerCase();
-        const agentInfo = agentConfig[ownerKey];
-        const ownerColor = agentInfo?.color || 'var(--user-color)';
-        const avatarSvg = getAvatarSvg(d.owner || 'user');
-
-        const chipHtml = `
-            <div class="sb-chip" title="${escapeHtml(d.owner || 'user')}" style="border-color: color-mix(in srgb, ${ownerColor} 40%, transparent); background: color-mix(in srgb, ${ownerColor} 10%, transparent);">
-                ${avatarSvg}
-            </div>
-        `;
-
-        card.innerHTML = `
-            <div class="decision-card-header">
-                <span class="decision-number">#${displayNum}</span>
-                <span class="decision-pill ${d.status}" onclick="toggleDecisionStatus(${d.id})" title="Click to toggle status"><span class="decision-dot"></span>${d.status}</span>
-                ${chipHtml}
-                <span class="decision-owner" style="color: ${ownerColor}">${escapeHtml(d.owner || 'user')}</span>
-                <div class="decision-actions">
-                    ${debateIcon}${editIcon}${trashIcon}
-                </div>
-            </div>
-            <div class="decision-text">${escapeHtml(d.decision)}</div>
-            ${reasonHtml}
-        `;
-        list.appendChild(card);
+    // Group order: active first, drafts second, inactive collapsed
+    const groups = [
+        { key: 'active', label: 'ACTIVE', items: [] },
+        { key: 'draft', label: 'DRAFTS', items: [] },
+        { key: 'archived', label: 'ARCHIVE', items: [] },
+    ];
+    for (const r of panelRules) {
+        const status = normalize(r.status);
+        const g = groups.find(g => g.key === status);
+        if (g) g.items.push(r);
+        else groups[2].items.push(r);
     }
 
-    if (hint) list.insertAdjacentHTML('beforeend', hint);
+    // Soft warning at 7+ active
+    if (activeCount >= 7) {
+        const warning = document.createElement('div');
+        warning.className = 'rules-soft-warning';
+        warning.textContent = 'Less than seven active rules tends to work better';
+        list.appendChild(warning);
+    }
 
-    // Re-insert preserved create form at top and restore focus
+    for (const group of groups) {
+        group.items.sort((a, b) => b.id - a.id);
+
+        const isCollapsible = group.key === 'archived';
+        const isCollapsed = isCollapsible && !_rulesArchivedExpanded;
+
+        const header = document.createElement('div');
+        header.className = 'rules-group-header ' + group.key + (isCollapsed ? ' collapsed' : '');
+        const isEmpty = group.items.length === 0;
+        header.textContent = isEmpty ? group.label : `${group.label} (${group.items.length})`;
+        if (isEmpty) header.classList.add('empty-group');
+        if (isCollapsible) {
+            header.onclick = () => {
+                _rulesArchivedExpanded = !_rulesArchivedExpanded;
+                header.classList.toggle('collapsed');
+                const container = header.nextElementSibling;
+                if (container) container.classList.toggle('collapsed');
+            };
+        }
+
+        // Drop target: drag a rule card onto this header to change its status
+        header.addEventListener('dragover', (e) => {
+            if (!_draggedRuleId) return;
+            e.preventDefault();
+            header.classList.add('drop-target');
+        });
+        header.addEventListener('dragleave', () => {
+            header.classList.remove('drop-target');
+        });
+        header.addEventListener('drop', (e) => {
+            e.preventDefault();
+            header.classList.remove('drop-target');
+            if (!_draggedRuleId) return;
+            const id = _draggedRuleId;
+            const d = rules.find(r => r.id === id);
+            if (!d) return;
+            const currentStatus = normalize(d.status);
+            if (currentStatus === group.key) return;
+            if (group.key === 'active') {
+                ws.send(JSON.stringify({ type: 'rule_activate', id }));
+            } else {
+                ws.send(JSON.stringify({ type: 'rule_deactivate', id }));
+            }
+        });
+
+        list.appendChild(header);
+
+        const itemsContainer = document.createElement('div');
+        itemsContainer.className = 'rules-group-items' + (isCollapsed ? ' collapsed' : '');
+        const itemsInner = document.createElement('div');
+        itemsInner.className = 'rules-group-items-inner';
+
+        for (const d of group.items) {
+            const card = document.createElement('div');
+            card.className = 'rule-card';
+            card.dataset.id = d.id;
+            card.draggable = true;
+            card.onclick = () => editRule(d.id);
+
+            card.addEventListener('dragstart', (e) => {
+                _draggedRuleId = d.id;
+                card.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            card.addEventListener('dragend', () => {
+                _draggedRuleId = null;
+                card.classList.remove('dragging');
+            });
+
+            const displayStatus = normalize(d.status);
+
+            card.innerHTML = `
+                <div class="rule-card-header">
+                    <span class="rule-status-dot ${displayStatus}"></span>
+                    <div class="rule-text">${escapeHtml(d.text || d.decision || '')}</div>
+                </div>
+            `;
+            itemsInner.appendChild(card);
+        }
+
+        // Trash zone for archived rules — same style as Jobs
+        if (group.key === 'archived' && group.items.length > 0) {
+            const trashZone = document.createElement('div');
+            trashZone.className = 'archive-trash-zone visible';
+            trashZone.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M6 4V3h4v1M5 4v8.5h6V4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="archive-trash-hint">Drag here to delete</span>`;
+
+            trashZone.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; trashZone.classList.add('hover'); });
+            trashZone.addEventListener('dragleave', () => { trashZone.classList.remove('hover'); });
+            trashZone.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                trashZone.classList.remove('hover');
+                if (!_draggedRuleId) return;
+                const id = _draggedRuleId;
+                const d = rules.find(r => r.id === id);
+                if (!d) return;
+                trashZone.classList.add('chomping');
+                ws.send(JSON.stringify({ type: 'rule_delete', id }));
+                setTimeout(() => trashZone.classList.remove('chomping'), 500);
+            });
+
+            itemsInner.appendChild(trashZone);
+        }
+
+        itemsContainer.appendChild(itemsInner);
+        list.appendChild(itemsContainer);
+    }
+
+    // Centered helper text at bottom
+    const helper = document.createElement('div');
+    helper.className = 'rules-centered-hint';
+    helper.textContent = 'New rules are sent on the next agent trigger';
+    list.appendChild(helper);
+
+    // Re-insert preserved create form at top
     if (savedForm) {
         list.prepend(savedForm);
         if (savedFocusSelector) {
@@ -3022,10 +3171,19 @@ function renderDecisionsPanel() {
     }
 }
 
-function updateDecisionsBadge() {
-    const badge = document.getElementById('decisions-badge');
+function updateRulesBadge() {
+    const badge = document.getElementById('rules-badge');
     if (!badge) return;
-    const count = decisions.filter(d => d.status === 'proposed').length;
+    // Only count unseen proposals — not all drafts
+    const panel = document.getElementById('rules-panel');
+    const panelOpen = panel && !panel.classList.contains('hidden');
+    if (panelOpen) {
+        // Panel is open — everything is seen
+        for (const r of rules) {
+            if (r.status === 'proposed' || r.status === 'draft') _seenRuleIds.add(r.id);
+        }
+    }
+    const count = rules.filter(r => (r.status === 'proposed' || r.status === 'draft') && !_seenRuleIds.has(r.id)).length;
     badge.textContent = count;
     badge.classList.toggle('hidden', count === 0);
 }
@@ -3062,8 +3220,8 @@ function markJobRead(jobId) {
     updateJobsBadge();
 }
 
-function showCreateDecision() {
-    const list = document.getElementById('decisions-list');
+function showCreateRule() {
+    const list = document.getElementById('rules-list');
     if (!list) return;
     const existing = list.querySelector('.job-create-form');
     if (existing) { existing.remove(); return; }
@@ -3071,121 +3229,84 @@ function showCreateDecision() {
     const form = document.createElement('div');
     form.className = 'job-create-form';
     form.innerHTML = `
-        <input type="text" placeholder="Decision" class="decision-create-text" maxlength="80" autofocus>
-        <textarea placeholder="Reason (optional)" class="decision-create-reason" maxlength="80" rows="2"></textarea>
+        <input type="text" placeholder="Write a short rule agents should follow" class="rule-create-text" maxlength="160" autofocus>
         <div class="job-create-actions">
             <button class="cancel-btn" onclick="this.closest('.job-create-form').remove()">Cancel</button>
-            <button class="create-btn" onclick="submitCreateDecision(this)">Make</button>
+            <button class="create-btn" onclick="submitCreateRule(this)">Create</button>
         </div>
     `;
     list.prepend(form);
-    const textInput = form.querySelector('.decision-create-text');
+    const textInput = form.querySelector('.rule-create-text');
     textInput.focus();
     textInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            form.querySelector('.decision-create-reason').focus();
+            submitCreateRule(form.querySelector('.create-btn'));
         } else if (e.key === 'Escape') {
             form.remove();
         }
     });
-    const reasonTA = form.querySelector('.decision-create-reason');
-    reasonTA.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') form.remove();
-    });
-    reasonTA.addEventListener('input', () => {
-        reasonTA.style.height = 'auto';
-        reasonTA.style.height = reasonTA.scrollHeight + 'px';
-    });
 }
 
-function submitCreateDecision(btn) {
+function submitCreateRule(btn) {
     const form = btn.closest('.job-create-form');
-    const textInput = form.querySelector('.decision-create-text');
-    const reasonInput = form.querySelector('.decision-create-reason');
+    const textInput = form.querySelector('.rule-create-text');
     const text = (textInput.value || '').trim();
-    const reason = (reasonInput.value || '').trim();
     if (!text) { textInput.focus(); return; }
 
     ws.send(JSON.stringify({
-        type: 'decision_propose',
-        decision: text,
-        reason: reason,
-        owner: username,
+        type: 'rule_propose',
+        text: text,
+        author: username,
+        channel: activeChannel,
     }));
     form.remove();
 }
 
-function debateDecision(id) {
-    const d = decisions.find(d => d.id === id);
-    if (!d) return;
-    const agents = Object.keys(agentConfig);
-    const mentions = agents.map(a => `@${a}`).join(' ');
-    const input = document.getElementById('input');
-    input.value = `${mentions} Debate this decision: "${d.decision}"`;
-    input.focus();
-    // Close the decisions panel so the user can see the chat
-    const panel = document.getElementById('decisions-panel');
-    if (panel && !panel.classList.contains('hidden')) {
-        _preserveScroll(() => {
-            panel.classList.add('hidden');
-            document.getElementById('decisions-toggle').classList.remove('active');
-        });
-    }
-}
-
-function toggleDecisionStatus(id) {
-    const d = decisions.find(d => d.id === id);
+function toggleRuleStatus(id) {
+    const d = rules.find(r => r.id === id);
     if (!d) return;
 
-    // Animate the pill
-    const card = document.querySelector(`.decision-card[data-id="${id}"]`);
-    const pill = card?.querySelector('.decision-pill');
-    if (pill) {
-        pill.classList.remove('just-toggled');
-        void pill.offsetWidth; // force reflow
-        pill.classList.add('just-toggled');
-    }
-
-    if (d.status === 'proposed') {
-        ws.send(JSON.stringify({ type: 'decision_approve', id }));
+    if (d.status === 'active' || d.status === 'approved') {
+        ws.send(JSON.stringify({ type: 'rule_deactivate', id }));
     } else {
-        ws.send(JSON.stringify({ type: 'decision_unapprove', id }));
+        ws.send(JSON.stringify({ type: 'rule_activate', id }));
     }
 }
 
-function editDecision(id) {
-    const d = decisions.find(d => d.id === id);
+function editRule(id) {
+    const d = rules.find(r => r.id === id);
     if (!d) return;
 
-    const card = document.querySelector(`.decision-card[data-id="${id}"]`);
+    const card = document.querySelector(`.rule-card[data-id="${id}"]`);
     if (!card || card.classList.contains('editing')) return;
     card.classList.add('editing');
 
-    // Create inline edit fields
     const editArea = document.createElement('div');
-    editArea.className = 'decision-edit-area';
+    editArea.className = 'rule-edit-area';
+    editArea.onclick = (e) => e.stopPropagation();
     editArea.innerHTML = `
-        <textarea class="decision-edit-field" maxlength="${DECISION_MAX_CHARS}" rows="1">${escapeHtml(d.decision)}</textarea>
-        <div class="char-counter">${(d.decision || '').length}/${DECISION_MAX_CHARS}</div>
-        <textarea class="decision-edit-field" maxlength="${DECISION_MAX_CHARS}" rows="1" placeholder="Reason (optional)">${escapeHtml(d.reason || '')}</textarea>
-        <div class="char-counter">${(d.reason || '').length}/${DECISION_MAX_CHARS}</div>
-        <div class="decision-edit-actions">
-            <button class="save-btn" onclick="saveDecisionEdit(${id})">Save</button>
-            <button class="cancel-btn" onclick="cancelDecisionEdit(${id})">Cancel</button>
+        <textarea class="rule-edit-field" maxlength="${RULE_MAX_CHARS}" rows="1" data-limit="${RULE_MAX_CHARS}">${escapeHtml(d.text || '')}</textarea>
+        <div class="char-counter">${(d.text || '').length}/${RULE_MAX_CHARS}</div>
+        <div class="rule-edit-actions">
+            <button class="save-btn" onclick="event.stopPropagation();saveRuleEdit(${id})">Save</button>
+            <button class="cancel-btn" onclick="event.stopPropagation();cancelRuleEdit(${id})">Cancel</button>
+            <span style="flex:1"></span>
+            <button class="delete-inline-btn" onclick="event.stopPropagation();deleteRule(${id})">Delete</button>
         </div>
     `;
     card.appendChild(editArea);
 
     // Wire auto-grow + counters on edit fields
-    editArea.querySelectorAll('.decision-edit-field').forEach(ta => {
+    editArea.querySelectorAll('.rule-edit-field').forEach(ta => {
         const counter = ta.nextElementSibling;
+        const limit = parseInt(ta.dataset.limit) || RULE_MAX_CHARS;
         autoGrowTextarea(ta);
         ta.addEventListener('input', () => {
             autoGrowTextarea(ta);
             if (counter && counter.classList.contains('char-counter')) {
-                counter.textContent = `${ta.value.length}/${DECISION_MAX_CHARS}`;
-                counter.classList.toggle('over', ta.value.length >= DECISION_MAX_CHARS);
+                counter.textContent = `${ta.value.length}/${limit}`;
+                counter.classList.toggle('over', ta.value.length >= limit);
             }
         });
     });
@@ -3196,64 +3317,62 @@ function editDecision(id) {
     firstField.selectionStart = firstField.selectionEnd = firstField.value.length;
 }
 
-function saveDecisionEdit(id) {
-    const card = document.querySelector(`.decision-card[data-id="${id}"]`);
+function saveRuleEdit(id) {
+    const card = document.querySelector(`.rule-card[data-id="${id}"]`);
     if (!card) return;
 
-    const fields = card.querySelectorAll('.decision-edit-field');
-    const newText = fields[0].value.trim();
-    const newReason = fields[1].value.trim();
+    const field = card.querySelector('.rule-edit-field');
+    const newText = field?.value.trim();
 
     if (!newText) return;
 
     ws.send(JSON.stringify({
-        type: 'decision_edit',
+        type: 'rule_edit',
         id,
-        decision: newText,
-        reason: newReason,
+        text: newText,
     }));
 }
 
-function cancelDecisionEdit(id) {
-    const card = document.querySelector(`.decision-card[data-id="${id}"]`);
+function cancelRuleEdit(id) {
+    const card = document.querySelector(`.rule-card[data-id="${id}"]`);
     if (!card) return;
     card.classList.remove('editing');
-    const editArea = card.querySelector('.decision-edit-area');
+    const editArea = card.querySelector('.rule-edit-area');
     if (editArea) editArea.remove();
 }
 
-function startDeleteDecision(id) {
-    const card = document.querySelector(`.decision-card[data-id="${id}"]`);
+function startDeleteRule(id) {
+    const card = document.querySelector(`.rule-card[data-id="${id}"]`);
     if (!card) return;
-    const actions = card.querySelector('.decision-actions');
+    const actions = card.querySelector('.rule-actions');
     if (!actions || actions.dataset.confirming) return;
     actions.dataset.confirming = '1';
     actions.style.opacity = '1';
     actions.innerHTML = `
         <span style="font-size:11px;color:var(--error-color);white-space:nowrap;margin-right:4px">Delete?</span>
-        <button class="confirm-yes" style="background:var(--error-color);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deleteDecision(${id})">Yes</button>
-        <button class="confirm-no" style="background:transparent;color:var(--text-dim);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="cancelDeleteDecision(${id})">No</button>
+        <button class="confirm-yes" style="background:var(--error-color);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deleteRule(${id})">Yes</button>
+        <button class="confirm-no" style="background:transparent;color:var(--text-dim);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="cancelDeleteRule(${id})">No</button>
     `;
 }
 
-function deleteDecision(id) {
-    const d = decisions.find(d => d.id === id);
-    ws.send(JSON.stringify({ type: 'decision_delete', id }));
+function deleteRule(id) {
+    const d = rules.find(r => r.id === id);
+    ws.send(JSON.stringify({ type: 'rule_delete', id }));
 
     // Prefill a rejection message to the proposer
-    if (d && d.owner && d.owner.toLowerCase() !== username.toLowerCase()) {
+    const author = d?.author || d?.owner;
+    if (d && author && author.toLowerCase() !== username.toLowerCase()) {
         const input = document.getElementById('input');
         const reasonBit = d.reason ? ` (reason: ${d.reason})` : '';
-        input.value = `@${d.owner} Decision rejected: "${d.decision}"${reasonBit} — `;
+        input.value = `@${author} Rule rejected: "${d.text || d.decision || ''}"${reasonBit} — `;
         input.focus();
-        // Move cursor to end
         input.selectionStart = input.selectionEnd = input.value.length;
         input.dispatchEvent(new Event('input'));
     }
 }
 
-function cancelDeleteDecision(id) {
-    renderDecisionsPanel();
+function cancelDeleteRule(id) {
+    renderRulesPanel();
 }
 
 // Style #hashtags in rendered message text
@@ -4782,6 +4901,30 @@ async function requestChangesProposal(msgId) {
         setTimeout(() => startReply(msgId), 200);
     } catch (e) {
         console.error('Failed to request changes on proposal:', e);
+    }
+}
+
+async function resolveRuleProposal(msgId, action) {
+    try {
+        await fetch(`/api/messages/${msgId}/resolve_rule_proposal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
+            body: JSON.stringify({ action }),
+        });
+    } catch (e) {
+        console.error('Failed to resolve rule proposal:', e);
+    }
+}
+
+async function dismissRuleProposal(msgId) {
+    // Demote to regular chat message — same as job proposal dismiss
+    try {
+        await fetch(`/api/messages/${msgId}/demote_rule_proposal`, {
+            method: 'POST',
+            headers: { 'X-Session-Token': SESSION_TOKEN },
+        });
+    } catch (e) {
+        console.error('Failed to dismiss rule proposal:', e);
     }
 }
 

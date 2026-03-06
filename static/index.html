@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentchattr</title>
-    <link rel="stylesheet" href="/static/style.css?v=153">
+    <link rel="stylesheet" href="/static/style.css?v=174">
     <link rel="icon" href="/static/favicon.ico">
 </head>
 <body>
@@ -28,12 +28,12 @@
                     </svg>
                     <span class="jobs-badge hidden" id="jobs-badge">0</span>
                 </button>
-                <button class="settings-btn" id="decisions-toggle" onclick="toggleDecisionsPanel()" title="Decisions">
+                <button class="settings-btn" id="rules-toggle" onclick="toggleRulesPanel()" title="Rules">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                         <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/>
                         <path d="M5 8L7 10L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
                     </svg>
-                    <span class="decisions-badge hidden" id="decisions-badge">0</span>
+                    <span class="rules-badge hidden" id="rules-badge">0</span>
                 </button>
                 <button class="settings-btn" id="pins-toggle" onclick="togglePinsPanel()" title="Pinned messages">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -88,7 +88,6 @@
             <div class="settings-field">
                 <div id="sound-settings"></div>
             </div>
-            <a class="settings-support" href="https://buymeacoffee.com/bcurts" target="_blank" rel="noopener">&#9829; Support</a>
         </div>
 
         <div id="pins-panel" class="hidden">
@@ -101,6 +100,7 @@
         <div id="channel-bar">
             <div id="channel-tabs"></div>
             <button id="channel-add-btn" class="channel-add" onclick="showChannelCreateDialog()" title="Add channel">+</button>
+            <a class="channel-support" href="https://buymeacoffee.com/bcurts" target="_blank" rel="noopener">&#9829; Support</a>
         </div>
 
         <div id="content-area">
@@ -152,14 +152,15 @@
                     </div>
                 </div>
             </aside>
-            <aside id="decisions-panel" class="hidden">
-                <div class="decisions-grip" id="decisions-grip"></div>
-                <div class="decisions-header">
-                    <span>Decisions</span>
-                    <span class="decisions-counter" id="decisions-counter"></span>
-                    <button class="jobs-create-btn" onclick="showCreateDecision()" title="Make Decision">+</button>
+            <aside id="rules-panel" class="hidden">
+                <div class="rules-grip" id="rules-grip"></div>
+                <div class="rules-header">
+                    <span>Rules</span>
+                    <span class="rules-counter" id="rules-counter"></span>
+                    <button class="rules-remind-btn" onclick="remindAgents()">Remind agents</button>
+                    <button class="jobs-create-btn" onclick="showCreateRule()" title="Add Rule">+</button>
                 </div>
-                <div id="decisions-list"></div>
+                <div id="rules-list"></div>
             </aside>
         </div>
 
@@ -197,6 +198,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/chat.js?v=153"></script>
+    <script src="/static/chat.js?v=174"></script>
 </body>
 </html>

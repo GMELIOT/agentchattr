@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 # Shared state — set by run.py before starting
 store = None
-decisions = None
+rules = None
 summaries = None
 jobs = None  # set by run.py — JobStore instance
 room_settings = None  # set by run.py — dict with "channels" list etc.
@@ -48,7 +48,7 @@ _MCP_INSTRUCTIONS = (
     "agentchattr — a shared chat channel for coordinating development between AI agents and humans. "
     "Use chat_send to post messages. Use chat_read to check recent messages. "
     "Use chat_join when you start a session to announce your presence. "
-    "Use chat_decision to list or propose project decisions (humans approve via the web UI). "
+    "Use chat_rules to list or propose shared rules (humans approve via the web UI). "
     "Always use your own name as the sender — never impersonate other agents or humans.\n\n"
     "CRITICAL — Sender Identity Rules:\n"
     "Your BASE agent identity (used for chat_claim and chat_read) is:\n"
@@ -74,12 +74,11 @@ _MCP_INSTRUCTIONS = (
     "A second read is fine if you can name the reason (checked a different channel, did work and expect a reply, "
     "recovering from an error). After an empty read ('No new messages'), do NOT read the same channel again — "
     "stop and wait for your next prompt. Never use chat_read as a sleep/wait loop.\n\n"
-    "Decisions are lightweight project memory. They help agents stay aligned on agreed conventions, "
-    "architecture choices, and workflow rules. At the start of a session, call chat_decision(action='list') "
-    "to read existing approved decisions — treat approved decisions as authoritative guidance. "
-    "When you make a significant choice that other agents should follow (e.g. a library pick, naming "
-    "convention, or architecture pattern), propose it as a decision so the human can approve it. "
-    "Keep decisions short and actionable (max 80 chars). Don't propose trivial or session-specific things.\n\n"
+    "Rules are the shared working style for your agents. They are short imperative instructions that all agents should follow. "
+    "At session start, call chat_rules(action='list') to read active rules — treat them as authoritative guidance. "
+    "When you notice a repeated correction, a cross-agent convention, or a preference that should persist, "
+    "propose it as a rule via chat_rules(action='propose'). Keep rules short and imperative (max 160 chars). "
+    "Don't propose trivial or session-specific things. chat_decision is an alias for chat_rules (backward compat).\n\n"
     "Messages belong to channels (default: 'general'). Use the 'channel' parameter in chat_send and "
     "chat_read to target a specific channel. Omit channel or pass empty string to read from all channels.\n\n"
     "If you are addressed in chat, respond in chat — use chat_send to reply in the same channel. "
@@ -685,6 +684,60 @@ def is_active(name: str) -> bool:
         return True
 
 
+def chat_rules(
+    action: str,
+    sender: str,
+    rule: str = "",
+    reason: str = "",
+    channel: str = "general",
+    ctx: Context | None = None,
+) -> str:
+    """Manage shared rules — the working style for your agents. Agents can list and propose; humans approve via the web UI.
+
+    Actions:
+      - list: Returns active rules (the current working style).
+      - propose: Propose a new rule for human approval. Requires rule text + sender + channel.
+
+    Pass channel to place the proposal card in the correct chat channel (default: 'general').
+    Agents cannot activate, edit, or delete rules — only humans can do that from the web UI."""
+    sender, err = _resolve_tool_identity(sender, ctx, field_name="sender", required=False)
+    if err:
+        return err
+    action = action.strip().lower()
+
+    if action == "list":
+        active = rules.active_list()
+        if not active["rules"]:
+            return "No active rules."
+        lines = [f"Active rules (epoch {active['epoch']}):"]
+        for i, r in enumerate(active["rules"], 1):
+            lines.append(f"  {i}. {r}")
+        return "\n".join(lines)
+
+    if action == "propose":
+        if not rule.strip():
+            return "Error: rule text is required."
+        if not sender.strip():
+            return "Error: sender is required."
+        result = rules.propose(rule, sender, reason)
+        if result is None:
+            return "Error: too many rules."
+        # Add proposal card to chat timeline
+        if store:
+            store.add(
+                sender, f"Rule proposal: {result['text']}",
+                msg_type="rule_proposal",
+                channel=channel or "general",
+                metadata={"rule_id": result["id"], "text": result["text"], "status": "pending"},
+            )
+        return f"Proposed rule #{result['id']}: '{result['text']}'. Human will review in the Rules panel."
+
+    if action in ("activate", "edit", "delete"):
+        return f"Error: '{action}' is only available to humans via the web UI."
+
+    return f"Unknown action: {action}. Valid actions: list, propose."
+
+
 def chat_decision(
     action: str,
     sender: str,
@@ -692,38 +745,8 @@ def chat_decision(
     reason: str = "",
     ctx: Context | None = None,
 ) -> str:
-    """Manage project decisions. Agents can list and propose; humans approve via the web UI.
-
-    Actions:
-      - list: Returns all decisions (proposed + approved).
-      - propose: Propose a new decision for human approval. Requires decision text + sender.
-
-    Agents cannot approve, edit, or delete decisions — only humans can do that from the web UI."""
-    sender, err = _resolve_tool_identity(sender, ctx, field_name="sender", required=False)
-    if err:
-        return err
-    action = action.strip().lower()
-
-    if action == "list":
-        items = decisions.list_all()
-        if not items:
-            return "No decisions yet."
-        return json.dumps(items, ensure_ascii=False)
-
-    if action == "propose":
-        if not decision.strip():
-            return "Error: decision text is required."
-        if not sender.strip():
-            return "Error: sender is required."
-        result = decisions.propose(decision, sender, reason)
-        if result is None:
-            return "Error: max 30 decisions reached."
-        return f"Proposed decision #{result['id']}: {result['decision']}"
-
-    if action in ("approve", "edit", "delete"):
-        return f"Error: '{action}' is only available to humans via the web UI."
-
-    return f"Unknown action: {action}. Valid actions: list, propose."
+    """Backward-compatible alias for chat_rules. Use chat_rules instead."""
+    return chat_rules(action=action, sender=sender, rule=decision, reason=reason, ctx=ctx)
 
 
 # --- Server instances ---
@@ -825,7 +848,7 @@ def chat_summary(
 
 
 _ALL_TOOLS = [
-    chat_send, chat_read, chat_resync, chat_join, chat_who, chat_decision,
+    chat_send, chat_read, chat_resync, chat_join, chat_who, chat_rules, chat_decision,
     chat_channels, chat_set_hat, chat_claim, chat_summary, chat_propose_job,
 ]
 

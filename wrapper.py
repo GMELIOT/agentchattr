@@ -304,12 +304,42 @@ def _fetch_role(server_port: int, agent_name: str) -> str:
         return ""
 
 
+def _fetch_active_rules(server_port: int, token: str = "") -> dict | None:
+    """Fetch active rules from the server."""
+    try:
+        import urllib.request
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        req = urllib.request.Request(f"http://127.0.0.1:{server_port}/api/rules/active", headers=headers)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
+
+
+def _report_rule_sync(server_port: int, agent_name: str, epoch: int, token: str = ""):
+    """Report that this agent has seen rules at the given epoch."""
+    try:
+        import urllib.request
+        body = json.dumps({"epoch": epoch}).encode()
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{server_port}/api/rules/agent_sync/{agent_name}",
+            method="POST",
+            data=body,
+            headers=headers,
+        )
+        urllib.request.urlopen(req, timeout=3)
+    except Exception:
+        pass
 
 
 def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None,
-                   server_port: int = 8300, agent_name: str = ""):
+                   server_port: int = 8300, agent_name: str = "", get_token_fn=None):
     """Poll queue file and inject an MCP read task when triggered."""
     first_mention = True
+    last_rules_epoch = 0  # 0 = unknown/cold start — will inject on first trigger
     while True:
         try:
             _, queue_file = get_identity_fn()
@@ -371,6 +401,21 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                         role = _fetch_role(server_port, agent_name)
                     if role:
                         prompt += f" - your role: {role}"
+
+                    # Smart rules injection: first trigger or epoch change (remind bumps epoch)
+                    _token = get_token_fn() if get_token_fn else ""
+                    rules_data = _fetch_active_rules(server_port, _token)
+                    if rules_data:
+                        need_inject = (
+                            last_rules_epoch == 0
+                            or rules_data["epoch"] != last_rules_epoch
+                        )
+                        if need_inject:
+                            if rules_data["rules"]:
+                                prompt += f" - rules: {'; '.join(rules_data['rules'])}"
+                            last_rules_epoch = rules_data["epoch"]
+                            _report_rule_sync(server_port, current_name, rules_data["epoch"], _token)
+
                     if first_mention and is_multi_instance:
                         prompt += _IDENTITY_HINT
                         first_mention = False
@@ -598,7 +643,8 @@ def main():
             target=_queue_watcher,
             args=(get_identity, inject_fn),
             kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
-                    "server_port": server_port, "agent_name": assigned_name},
+                    "server_port": server_port, "agent_name": assigned_name,
+                    "get_token_fn": get_token},
             daemon=True,
         )
         _watcher_thread.start()
@@ -611,7 +657,9 @@ def main():
                 _watcher_thread = threading.Thread(
                     target=_queue_watcher,
                     args=(get_identity, _watcher_inject_fn),
-                    kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag},
+                    kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
+                            "server_port": server_port, "agent_name": assigned_name,
+                            "get_token_fn": get_token},
                     daemon=True,
                 )
                 _watcher_thread.start()

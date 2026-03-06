@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from store import MessageStore
-from decisions import DecisionStore
+from rules import RuleStore
 from summaries import SummaryStore
 from jobs import JobStore
 from router import Router
@@ -28,7 +28,7 @@ app = FastAPI(title="agentchattr")
 
 # --- globals (set by configure()) ---
 store: MessageStore | None = None
-decisions: DecisionStore | None = None
+rules: RuleStore | None = None
 summaries: SummaryStore | None = None
 jobs: JobStore | None = None
 router: Router | None = None
@@ -192,7 +192,7 @@ def _install_security_middleware(token: str, cfg: dict):
             # Allow registered agents to authenticate via Bearer token
             # for /api/messages and /api/send (no browser session needed).
             auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer ") and path in ("/api/messages", "/api/send"):
+            if auth_header.lower().startswith("bearer ") and (path in ("/api/messages", "/api/send") or path.startswith("/api/rules/")):
                 bearer = auth_header[7:].strip()
                 if _self.registry and _self.registry.resolve_token(bearer):
                     return await call_next(request)
@@ -213,7 +213,7 @@ def _install_security_middleware(token: str, cfg: dict):
 
 
 def configure(cfg: dict, session_token: str = ""):
-    global store, decisions, summaries, jobs, router, agents, registry, config
+    global store, rules, summaries, jobs, router, agents, registry, config
     config = cfg
 
     # --- Security: store the session token and install middleware ---
@@ -233,8 +233,13 @@ def configure(cfg: dict, session_token: str = ""):
     raw_upload_dir = cfg.get("images", {}).get("upload_dir", "./uploads")
     store.upload_dir = Path(raw_upload_dir)
     
-    decisions = DecisionStore(str(Path(data_dir) / "decisions.json"))
-    decisions.on_change(_on_decision_change)
+    # Rules store — migrates from legacy decisions.json automatically
+    rules_path = Path(data_dir) / "rules.json"
+    legacy_decisions = Path(data_dir) / "decisions.json"
+    if not rules_path.exists() and legacy_decisions.exists():
+        legacy_decisions.rename(rules_path)
+    rules = RuleStore(str(rules_path))
+    rules.on_change(_on_rule_change)
 
     summaries = SummaryStore(str(Path(data_dir) / "summaries.json"))
 
@@ -446,17 +451,18 @@ def _on_store_message(msg: dict):
     asyncio.run_coroutine_threadsafe(_handle_new_message(msg), _event_loop)
 
 
-def _on_decision_change(action: str, decision: dict):
-    """Called from any thread when a decision changes."""
+def _on_rule_change(action: str, rule: dict):
+    """Called from any thread when a rule changes."""
     if _event_loop is None:
         return
     try:
         loop = asyncio.get_running_loop()
         if loop is _event_loop:
-            asyncio.ensure_future(broadcast_decision(action, decision))
+            asyncio.ensure_future(broadcast_rule(action, rule))
             return
     except RuntimeError:
         pass
+    asyncio.run_coroutine_threadsafe(broadcast_rule(action, rule), _event_loop)
 
 
 def _on_job_change(action: str, data: dict):
@@ -685,8 +691,8 @@ async def broadcast_settings():
     ws_clients.difference_update(dead)
 
 
-async def broadcast_decision(action: str, decision: dict):
-    data = json.dumps({"type": "decision", "action": action, "data": decision})
+async def broadcast_rule(action: str, rule: dict):
+    data = json.dumps({"type": "rule", "action": action, "data": rule})
     dead = set()
     for client in list(ws_clients):
         try:
@@ -778,8 +784,8 @@ async def websocket_endpoint(websocket: WebSocket):
     # Send todos {msg_id: status}
     await websocket.send_text(json.dumps({"type": "todos", "data": store.get_todos()}))
 
-    # Send decisions
-    await websocket.send_text(json.dumps({"type": "decisions", "data": decisions.list_all()}))
+    # Send rules
+    await websocket.send_text(json.dumps({"type": "rules", "data": rules.list_all()}))
 
     # Send hats
     await websocket.send_text(json.dumps({"type": "hats", "data": agent_hats}))
@@ -899,40 +905,66 @@ async def websocket_endpoint(websocket: WebSocket):
                     await broadcast_todo_update(int(msg_id), None)
                 continue
 
-            elif event.get("type") == "decision_propose":
-                text = event.get("decision", "").strip()
-                owner = event.get("owner") or room_settings.get("username", "user")
+            elif event.get("type") in ("decision_propose", "rule_propose"):
+                text = event.get("text") or event.get("decision", "")
+                text = text.strip()
+                author = event.get("author") or event.get("owner") or room_settings.get("username", "user")
                 reason = event.get("reason", "")
+                is_human = author.lower() == room_settings.get("username", "user").lower()
                 if text:
-                    decisions.propose(text, owner, reason)
+                    rule = rules.propose(text, author, reason)
+                    if rule:
+                        if is_human:
+                            # Human-created rules go straight to draft, no card
+                            rules.make_draft(rule["id"])
+                        else:
+                            # Agent proposals get a card in the timeline
+                            channel = event.get("channel", "general")
+                            msg = store.add(
+                                author, f"Rule proposal: {text}",
+                                msg_type="rule_proposal",
+                                channel=channel,
+                                metadata={"rule_id": rule["id"], "text": text, "status": "pending"},
+                            )
+                            await broadcast(msg)
                 continue
 
-            elif event.get("type") == "decision_approve":
-                did = event.get("id")
-                if did is not None:
-                    decisions.approve(int(did))
+            elif event.get("type") in ("decision_approve", "rule_activate"):
+                rid = event.get("id")
+                if rid is not None:
+                    rules.activate(int(rid))
                 continue
 
-            elif event.get("type") == "decision_unapprove":
-                did = event.get("id")
-                if did is not None:
-                    decisions.unapprove(int(did))
+            elif event.get("type") in ("decision_unapprove", "rule_deactivate"):
+                rid = event.get("id")
+                if rid is not None:
+                    rules.deactivate(int(rid))
                 continue
 
-            elif event.get("type") == "decision_edit":
-                did = event.get("id")
-                if did is not None:
-                    decisions.edit(
-                        int(did),
-                        decision=event.get("decision"),
+            elif event.get("type") in ("decision_edit", "rule_edit"):
+                rid = event.get("id")
+                if rid is not None:
+                    rules.edit(
+                        int(rid),
+                        text=event.get("text") or event.get("decision"),
                         reason=event.get("reason"),
                     )
                 continue
 
-            elif event.get("type") == "decision_delete":
-                did = event.get("id")
-                if did is not None:
-                    decisions.delete(int(did))
+            elif event.get("type") in ("decision_delete", "rule_delete"):
+                rid = event.get("id")
+                if rid is not None:
+                    rules.delete(int(rid))
+                continue
+
+            elif event.get("type") == "rule_remind":
+                rules.set_remind()
+                remind_data = json.dumps({"type": "rules_remind", "data": {}})
+                for client in list(ws_clients):
+                    try:
+                        await client.send_text(remind_data)
+                    except Exception:
+                        pass
                 continue
 
             elif event.get("type") == "update_settings":
@@ -1222,6 +1254,75 @@ async def demote_proposal(msg_id: int):
     return updated or {"ok": True}
 
 
+@app.post("/api/messages/{msg_id}/resolve_rule_proposal")
+async def resolve_rule_proposal(msg_id: int, request: Request):
+    """Activate or dismiss a rule proposal."""
+    msg = store.get_by_id(msg_id)
+    if not msg:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+    if msg.get("type") != "rule_proposal":
+        return JSONResponse({"error": "not a rule proposal"}, status_code=400)
+    body = await request.json()
+    action = body.get("action", "")
+    meta = msg.get("metadata", {})
+    rule_id = meta.get("rule_id")
+
+    if action == "activate" and rule_id is not None:
+        rules.activate(int(rule_id))
+        meta["status"] = "activated"
+    elif action == "draft" and rule_id is not None:
+        rules.make_draft(int(rule_id))
+        meta["status"] = "drafted"
+    elif action == "dismiss" and rule_id is not None:
+        rules.delete(int(rule_id))
+        meta["status"] = "dismissed"
+    else:
+        return JSONResponse({"error": "invalid action"}, status_code=400)
+
+    updated = store.update_message(msg_id, {"metadata": meta})
+    if updated:
+        # Broadcast the updated message so all clients re-render the card
+        payload = json.dumps({"type": "edit", "message": updated})
+        dead = set()
+        for client in list(ws_clients):
+            try:
+                await client.send_text(payload)
+            except Exception:
+                dead.add(client)
+        ws_clients.difference_update(dead)
+    return updated or {"ok": True}
+
+
+@app.post("/api/messages/{msg_id}/demote_rule_proposal")
+async def demote_rule_proposal(msg_id: int):
+    """Demote a rule_proposal message back to a regular chat message and delete the rule."""
+    msg = store.get_by_id(msg_id)
+    if not msg:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+    if msg.get("type") != "rule_proposal":
+        return JSONResponse({"error": "not a rule proposal"}, status_code=400)
+    meta = msg.get("metadata", {})
+    rule_id = meta.get("rule_id")
+    if rule_id is not None:
+        rules.delete(int(rule_id))
+    text = meta.get("text", msg.get("text", ""))
+    updated = store.update_message(msg_id, {
+        "type": "chat",
+        "text": text,
+        "metadata": {},
+    })
+    if updated:
+        payload = json.dumps({"type": "edit", "message": updated})
+        dead = set()
+        for client in list(ws_clients):
+            try:
+                await client.send_text(payload)
+            except Exception:
+                dead.add(client)
+        ws_clients.difference_update(dead)
+    return updated or {"ok": True}
+
+
 @app.post("/api/trigger-agent")
 async def trigger_agent_silent(request: Request):
     """Silently trigger an agent with a message (no chat message posted)."""
@@ -1445,6 +1546,53 @@ async def set_agent_role(agent_name: str, request: Request):
     mcp_bridge.set_role(agent_name, role)
     await broadcast_status()
     return JSONResponse({"ok": True, "role": role})
+
+
+# --- Rules API ---
+
+@app.get("/api/rules")
+async def get_rules():
+    """Get all rules (all states)."""
+    return JSONResponse(rules.list_all())
+
+
+@app.get("/api/rules/active")
+async def get_active_rules():
+    """Get compact active rules for agent injection."""
+    return JSONResponse(rules.active_list())
+
+
+@app.post("/api/rules/remind")
+async def remind_agents():
+    """Set remind flag — agents get rules on next trigger."""
+    rules.set_remind()
+    remind_data = json.dumps({"type": "rules_remind", "data": {}})
+    for client in list(ws_clients):
+        try:
+            await client.send_text(remind_data)
+        except Exception:
+            pass
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/rules/agent_sync/{agent_name}")
+async def report_rule_sync(agent_name: str, request: Request):
+    """Wrapper reports that an agent has seen rules at a given epoch."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    epoch = body.get("epoch", 0)
+    rules.report_agent_sync(agent_name, epoch)
+    # Clear remind flag once any agent has seen the updated rules
+    rules.clear_remind()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/rules/freshness")
+async def get_rules_freshness():
+    """Get per-agent sync status."""
+    return JSONResponse(rules.agent_freshness())
 
 
 @app.post("/api/register")

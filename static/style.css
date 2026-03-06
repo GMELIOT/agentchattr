@@ -424,21 +424,28 @@ header h1 {
     background: rgba(248, 113, 113, 0.15);
 }
 
-.settings-support {
-    color: var(--text-dim);
-    font-size: 11px;
-    text-decoration: none;
-    opacity: 0.5;
-    transition: opacity 0.15s;
-    white-space: nowrap;
-}
-
-.settings-support:hover {
-    opacity: 1;
+/* Support button — far right of channel bar */
+.channel-support {
+    position: absolute;
+    right: 16px;
     color: #f472b6;
+    font-size: 11px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    padding: 3px 10px;
+    border: 1px solid rgba(244, 114, 182, 0.35);
+    border-radius: 10px;
+    background: rgba(244, 114, 182, 0.06);
+    transition: background 0.15s, box-shadow 0.15s;
 }
 
-/* --- Content area (timeline + decisions sidebar) --- */
+.channel-support:hover {
+    background: rgba(244, 114, 182, 0.14);
+    box-shadow: 0 0 8px rgba(244, 114, 182, 0.15);
+}
+
+/* --- Content area (timeline + rules sidebar) --- */
 
 #content-area {
     display: flex;
@@ -1044,6 +1051,7 @@ main#timeline {
 /* --- Channel bar --- */
 
 #channel-bar {
+    position: relative;
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
@@ -1336,6 +1344,8 @@ main#timeline {
     height: 22px;
     border-radius: var(--sb-card-radius);
     font-size: 16px;
+    line-height: 1;
+    padding: 0 0 1px 0;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -2486,9 +2496,9 @@ body.archive-no-select * {
 .channel-ctx-menu button.danger { color: var(--error-color, #f87171); }
 .channel-ctx-menu button.danger:hover { background: rgba(248, 113, 113, 0.15); }
 
-/* --- Decisions panel (right sidebar) --- */
+/* --- Rules panel (right sidebar) --- */
 
-#decisions-panel {
+#rules-panel {
     --panel-w: 320px;
     width: var(--panel-w);
     min-width: 220px;
@@ -2504,14 +2514,14 @@ body.archive-no-select * {
     position: relative;
 }
 
-#decisions-panel.hidden {
+#rules-panel.hidden {
     margin-right: calc(-1 * var(--panel-w));
     opacity: 0;
     pointer-events: none;
 }
 
 /* Full-height drag grip on left edge */
-.decisions-grip {
+.rules-grip {
     position: absolute;
     left: 0;
     top: 0;
@@ -2526,12 +2536,12 @@ body.archive-no-select * {
     transition: background 0.15s;
 }
 
-.decisions-grip:hover,
-.decisions-grip.dragging {
+.rules-grip:hover,
+.rules-grip.dragging {
     background: var(--accent);
 }
 
-.decisions-grip::after {
+.rules-grip::after {
     content: '';
     width: 2px;
     height: 32px;
@@ -2539,7 +2549,7 @@ body.archive-no-select * {
     border-right: 1px solid rgba(255,255,255,0.15);
 }
 
-.decisions-header {
+.rules-header {
     display: flex;
     align-items: center;
     padding: var(--sb-padding);
@@ -2552,11 +2562,46 @@ body.archive-no-select * {
     gap: var(--sb-gap);
 }
 
-.decisions-header > * {
-    line-height: 1;
+.rules-counter {
+    font-size: var(--sb-label-fs);
+    font-weight: 400;
+    color: var(--text-dim);
+    opacity: 0.7;
 }
 
-#decisions-list {
+.rules-remind-btn {
+    margin-left: auto;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--accent);
+    background: rgba(124, 58, 237, 0.1);
+    color: var(--accent);
+    transition: background 0.15s, color 0.15s;
+}
+
+.rules-remind-btn:hover {
+    background: rgba(124, 58, 237, 0.2);
+}
+
+.rules-remind-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.rules-soft-warning {
+    padding: 4px var(--sb-padding);
+    font-size: var(--sb-meta-fs);
+    color: var(--text-dim);
+    opacity: 0.6;
+    font-style: italic;
+    text-align: center;
+}
+
+#rules-list {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
@@ -2564,7 +2609,7 @@ body.archive-no-select * {
     flex-direction: column;
 }
 
-.decisions-empty {
+.rules-empty {
     padding: 24px 16px;
     color: var(--text-dim);
     font-size: var(--sb-meta-fs);
@@ -2576,154 +2621,176 @@ body.archive-no-select * {
     flex: 1;
 }
 
-.decision-card {
+/* Rules group headers — mirrors .jobs-group-header */
+.rules-group-header {
+    padding: var(--sb-padding);
+    padding-bottom: 4px;
+    font-size: var(--sb-label-fs);
+    font-weight: var(--sb-title-fw);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: var(--sb-card-border-width) solid var(--border);
+    margin-bottom: 2px;
+}
+
+.rules-group-header.draft {
+    color: var(--text-dim);
+    border-bottom-color: var(--sb-card-border-color);
+}
+
+.rules-group-header.active {
+    color: #34d399;
+    border-bottom-color: rgba(52, 211, 153, 0.2);
+}
+
+.rules-group-header.archived {
+    color: rgba(239, 68, 68, 0.5);
+    border-bottom-color: rgba(239, 68, 68, 0.1);
+    cursor: pointer;
+    user-select: none;
+    transition: color var(--sb-motion-fast);
+}
+
+.rules-group-header.archived:hover { color: var(--text); }
+
+.rules-group-header.archived::before {
+    content: '▾ ';
+    font-size: 9px;
+}
+
+.rules-group-header.archived.collapsed::before {
+    content: '▸ ';
+}
+
+.rules-group-header.empty-group { opacity: 0.35; }
+
+.rules-group-header.drop-target {
+    background: rgba(109, 138, 235, 0.12);
+    border-bottom-color: var(--accent, #6d8aeb);
+    color: var(--accent, #6d8aeb) !important;
+    opacity: 1;
+}
+
+.rules-group-items {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.25s ease;
+}
+.rules-group-items.collapsed {
+    grid-template-rows: 0fr;
+}
+.rules-group-items-inner {
+    overflow: hidden;
+    min-height: 0;
+}
+
+.rules-group-items .rule-card:last-child { border-bottom: none; }
+
+.rules-centered-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    padding: 16px;
+    font-size: var(--sb-meta-fs);
+    color: var(--text-dim);
+    opacity: 0.4;
+    text-align: center;
+}
+
+/* Rule card — mirrors .job-card */
+.rule-card {
     padding: var(--sb-padding);
     border-bottom: var(--sb-card-border-width) solid var(--sb-card-border-color);
     transition: background var(--sb-motion-fast);
     min-width: 0;
+    cursor: pointer;
 }
 
-.decision-card:hover { background: var(--bg-msg-hover); }
+.rule-card:hover { background: var(--bg-msg-hover); }
 
-.decision-card-header {
+.rule-card.dragging {
+    opacity: 0.35;
+    transform: scale(0.97);
+}
+
+.rule-card-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
+    gap: 6px;
 }
 
-.decision-pill {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: var(--sb-label-fs);
-    font-weight: 600;
-    flex-shrink: 0;
-}
-
-.decision-pill .decision-dot {
+.rule-status-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
 }
 
-.decision-pill.proposed {
-    background: rgba(251, 191, 36, 0.10);
-    color: #fbbf24;
+.rule-status-dot.draft { background: var(--text-dim); }
+.rule-status-dot.active { background: #34d399; }
+.rule-status-dot.archived { background: var(--text-dim); opacity: 0.4; }
+
+.rule-text {
+    font-size: var(--sb-title-fs);
+    color: var(--text);
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    line-height: var(--sb-title-lh);
+    min-width: 0;
+    flex: 1;
 }
 
-.decision-pill.proposed .decision-dot { background: #fbbf24; }
-
-.decision-pill.approved {
-    background: rgba(124, 58, 237, 0.10);
-    color: var(--accent);
-}
-
-.decision-pill.approved .decision-dot { background: var(--accent); }
-
-.decision-pill {
-    cursor: pointer;
-    transition: background 0.3s, color 0.3s;
-}
-
-.decision-pill:hover { opacity: 0.75; }
-
-@keyframes pill-flash {
-    0% { transform: scale(1); }
-    40% { transform: scale(1.15); }
-    100% { transform: scale(1); }
-}
-
-.decision-pill.just-toggled {
-    animation: pill-flash 0.3s ease-out;
-}
-
-.decision-owner {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-dim);
-}
-
-.decision-actions {
+.rule-actions {
     display: flex;
     align-items: center;
     gap: 2px;
-    margin-left: auto;
     opacity: 0;
     transition: opacity 0.1s;
     flex-shrink: 0;
 }
 
-.decision-card:hover .decision-actions { opacity: 1; }
+.rule-card:hover .rule-actions { opacity: 0.6; }
 
-.decision-actions button {
+.rule-actions button {
     background: none;
     border: none;
     cursor: pointer;
-    padding: 3px;
+    padding: 2px 4px;
     color: var(--text-dim);
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 4px;
-    transition: color 0.1s, background 0.1s;
+    border-radius: 3px;
+    transition: all 0.15s;
 }
 
-.decision-actions button:hover {
+.rule-actions button:hover {
     background: rgba(255, 255, 255, 0.06);
 }
 
-.decision-actions button.debate-btn {
-    font-size: 12px;
-    letter-spacing: 0.02em;
-}
-.decision-actions button.debate-btn:hover { color: #60a5fa; }
-.decision-actions button.edit-btn:hover { color: var(--text); }
-.decision-actions button.delete-btn:hover { color: var(--error-color); }
+.rule-actions button.delete-btn:hover { opacity: 1; color: #ef4444; background: rgba(239, 68, 68, 0.1); }
 
-.decision-number {
-    color: var(--text-dim);
-    font-size: 12px;
-    font-weight: 600;
-    flex-shrink: 0;
-}
-
-.decision-text {
-    font-size: var(--sb-title-fs);
-    line-height: var(--sb-title-lh);
-    color: var(--text);
-    margin-bottom: 2px;
-    overflow-wrap: break-word;
-}
-
-.decisions-counter {
-    font-size: var(--sb-label-fs);
-    font-weight: 400;
-    line-height: 1;
-    color: var(--text-dim);
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-}
-
-.decision-reason {
+.rule-reason {
     font-size: var(--sb-meta-fs);
     color: var(--text-dim);
     font-style: italic;
     overflow-wrap: break-word;
+    margin-top: 2px;
+    padding-left: 12px;
 }
+
 
 /* Inline edit fields */
 
-.decision-card.editing .decision-text,
-.decision-card.editing .decision-reason {
+.rule-card.editing .rule-text,
+.rule-card.editing .rule-reason {
     display: none;
 }
 
-.decision-edit-field {
+.rule-edit-field {
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -2739,17 +2806,17 @@ body.archive-no-select * {
     min-height: 32px;
 }
 
-.decision-edit-field:focus {
+.rule-edit-field:focus {
     border-color: var(--accent);
 }
 
-.decision-edit-actions {
+.rule-edit-actions {
     display: flex;
     gap: 6px;
     margin-top: 4px;
 }
 
-.decision-edit-actions button {
+.rule-edit-actions button {
     font-family: inherit;
     font-size: 11px;
     font-weight: 600;
@@ -2759,28 +2826,36 @@ body.archive-no-select * {
     border: none;
 }
 
-.decision-edit-actions .save-btn {
+.rule-edit-actions .save-btn {
     background: var(--accent);
     color: white;
 }
 
-.decision-edit-actions .cancel-btn {
+.rule-edit-actions .cancel-btn {
     background: transparent;
     color: var(--text-dim);
     border: 1px solid var(--border);
 }
 
-.decision-edit-actions .cancel-btn:hover {
+.rule-edit-actions .cancel-btn:hover {
     color: var(--text);
 }
 
+.rule-edit-actions .delete-inline-btn {
+    background: transparent;
+    color: var(--text-dim);
+    opacity: 0.5;
+}
 
-/* --- Decisions form --- */
+.rule-edit-actions .delete-inline-btn:hover {
+    color: #ef4444;
+    opacity: 1;
+}
 
 
-/* --- Decisions badge (header button) --- */
+/* --- Rules badge (header button) --- */
 
-.decisions-badge {
+.rules-badge {
     position: absolute;
     top: -4px;
     right: -4px;
@@ -2797,9 +2872,9 @@ body.archive-no-select * {
     padding: 0 3px;
 }
 
-.decisions-badge.hidden { display: none; }
+.rules-badge.hidden { display: none; }
 
-#decisions-toggle {
+#rules-toggle {
     position: relative;
 }
 
@@ -3169,6 +3244,17 @@ body.archive-no-select * {
     font-style: italic;
     margin-top: 6px;
 }
+
+/* rule-proposal-card inherits .proposal-card purple styling */
+
+.rule-proposal-text {
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.4;
+    margin-bottom: 2px;
+}
+
+/* Rules trash zone — reuses Jobs archive-trash-zone styles */
 
 .message.summary-msg {
     justify-content: center;

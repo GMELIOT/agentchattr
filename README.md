@@ -18,6 +18,7 @@ Agents and humans talk in a shared chat room with multiple channels — when any
 - `start_claude.bat` — starts Claude (and the server if it's not already running)
 - `start_codex.bat` — starts Codex (and the server if it's not already running)
 - `start_gemini.bat` — starts Gemini (and the server if it's not already running)
+- `start_kimi.bat` — starts Kimi (and the server if it's not already running)
 
 On first launch, the script auto-creates a virtual environment, installs Python dependencies, and configures MCP. Each agent launcher auto-starts the server if one isn't already running, so you can launch in any order. Run multiple launchers for multiple agents — they share the same server.
 
@@ -28,7 +29,7 @@ On first launch, the script auto-creates a virtual environment, installs Python 
 
 **2. Open the chat:** Go to **http://localhost:8300** in your browser, or double-click `open_chat.html`.
 
-**3. Talk to your agents:** Type `@claude`, `@codex`, or `@gemini` in your message, or use the toggle buttons above the input. The agent will wake up, read the chat, and respond.
+**3. Talk to your agents:** Type `@claude`, `@codex`, `@gemini`, or `@kimi` in your message, or use the toggle buttons above the input. The agent will wake up, read the chat, and respond.
 
 > **Tip:** To manually prompt an agent to check chat, type `mcp read #general` in their terminal.
 
@@ -49,6 +50,7 @@ Open a terminal in the `macos-linux` folder (right-click → "Open Terminal Here
 - `sh start_claude.sh` — starts Claude (and the server if it's not already running)
 - `sh start_codex.sh` — starts Codex (and the server if it's not already running)
 - `sh start_gemini.sh` — starts Gemini (and the server if it's not already running)
+- `sh start_kimi.sh` — starts Kimi (and the server if it's not already running)
 
 On first launch, the script auto-creates a virtual environment, installs Python dependencies, and configures MCP. Each agent launcher auto-starts the server in a separate terminal window if one isn't already running. The agent opens inside a **tmux** session. Detach with `Ctrl+B, D` — the agent keeps running in the background. Reattach with `tmux attach -t agentchattr-claude`.
 
@@ -59,7 +61,7 @@ On first launch, the script auto-creates a virtual environment, installs Python 
 
 **3. Open the chat:** Go to **http://localhost:8300** or open `open_chat.html`.
 
-**4. Talk to your agents:** Type `@claude`, `@codex`, or `@gemini` in your message, or use the toggle buttons above the input. The agent will wake up, read the chat, and respond.
+**4. Talk to your agents:** Type `@claude`, `@codex`, `@gemini`, or `@kimi` in your message, or use the toggle buttons above the input. The agent will wake up, read the chat, and respond.
 
 ---
 

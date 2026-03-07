@@ -447,6 +447,7 @@ function connectWebSocket() {
             if (activeChannel === event.old_name) {
                 activeChannel = event.new_name;
                 localStorage.setItem('agentchattr-channel', event.new_name);
+                Store.set('activeChannel', event.new_name);
             }
         } else if (event.type === 'jobs') {
             jobsData = event.data || [];
@@ -1426,6 +1427,7 @@ function applySettings(data) {
         if (!channelList.includes(activeChannel)) {
             activeChannel = 'general';
             localStorage.setItem('agentchattr-channel', 'general');
+            Store.set('activeChannel', 'general');
             filterMessagesByChannel();
         }
         renderChannelTabs();
@@ -2567,6 +2569,7 @@ function showChannelRenameDialog(oldName) {
             if (activeChannel === oldName) {
                 activeChannel = newName;
                 localStorage.setItem('agentchattr-channel', newName);
+                Store.set('activeChannel', newName);
             }
         }
         wrapper.remove();

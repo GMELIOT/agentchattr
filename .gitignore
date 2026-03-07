@@ -17,3 +17,7 @@ build/
 .gemini/
 .claude/
 tests/
+agents_lineup.svg
+docs/
+goals.py
+pr-reviews/

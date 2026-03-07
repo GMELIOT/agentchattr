@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentchattr</title>
-    <link rel="stylesheet" href="/static/style.css?v=178">
+    <link rel="stylesheet" href="/static/style.css?v=183">
     <link rel="icon" href="/static/favicon.ico">
 </head>
 <body>
@@ -113,6 +113,18 @@
             <a class="channel-support" href="https://buymeacoffee.com/bcurts" target="_blank" rel="noopener">&#9829; Support</a>
         </div>
 
+        <div id="session-bar" class="hidden">
+            <div class="session-info">
+                <span class="session-template"></span>
+                <span class="session-phase"></span>
+                <span class="session-waiting"></span>
+            </div>
+            <div id="session-end-controls" class="session-end-controls">
+                <button id="session-jump-btn" class="session-jump-btn hidden" onclick="jumpToSessionChannel()">Go to channel</button>
+                <button id="session-end-btn" class="session-end-btn" onclick="toggleEndSessionConfirm(event)">End Session</button>
+            </div>
+        </div>
+
         <div id="content-area">
             <main id="timeline">
                 <div id="loading-indicator">
@@ -183,6 +195,11 @@
             <div id="attachments"></div>
             <div id="input-row">
                 <span id="sender-label" class="sender-label">user</span>
+                <button id="session-launch-btn" onclick="showSessionLauncher()" title="Start a session">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                </button>
                 <textarea id="input"
                     placeholder="Type a message... (use @name to mention agents)"
                     rows="1"
@@ -208,6 +225,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/chat.js?v=178"></script>
+    <script src="/static/chat.js?v=184"></script>
 </body>
 </html>

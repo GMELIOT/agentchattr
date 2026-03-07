@@ -113,6 +113,21 @@ The Rules panel opens from the header. Rules are grouped into **Active**, **Draf
 
 **Remind agents** re-sends the current rules on the next trigger. The badge on the Rules button shows unseen proposals only. Max 160 chars per rule.
 
+### Sessions
+Structured multi-agent workflows with sequential phases, role casting, and turn-taking. Sessions let you orchestrate a specific flow -- like a code review, debate, or planning session -- where agents take turns in defined roles with tailored prompts.
+
+**Built-in templates:** Code Review, Debate, Design Critique, and Planning. Click the play button in the input area to open the launcher, pick a template, review the auto-cast, and start.
+
+**Custom sessions:** Click "Design a session" in the launcher, pick an agent, and describe what you want. The agent proposes a session draft as a card in the timeline. From there:
+- **Run** -- opens a cast preview where you assign agents to roles, then starts the session
+- **Save Template** -- saves the draft as a reusable template in the launcher
+- **Request Changes** -- inline feedback form; the agent revises and the old draft is superseded
+- **Dismiss** -- grey out the card
+
+During a session, phase banners mark transitions in the timeline, a sticky session bar shows progress, and agents are triggered sequentially with phase-specific prompts. The output phase is highlighted when the session completes.
+
+Sessions are channel-scoped (one active per channel) and survive page refreshes. Custom templates persist across restarts.
+
 ### Activity indicators
 Status pills show a spinning border in each agent's color when that agent is actively working — so you can minimize the terminals and still know at a glance who's busy. Detection works by hashing the agent's terminal screen buffer every second: if anything changes (spinner, streaming text, tool output), the pill lights up. When the screen stops changing, it stops instantly. Cross-platform — Windows uses `ReadConsoleOutputW`, Mac/Linux uses `tmux capture-pane`.
 
@@ -385,6 +400,9 @@ The wrapper registers with the server, watches for @mentions, reads recent chat 
 | `jobs.py` | Job store — JSON persistence, status tracking, threaded conversations |
 | `rules.py` | Rule store — JSON persistence, propose/activate/draft/archive/delete with epoch tracking |
 | `summaries.py` | Per-channel summary store — JSON persistence, read/write with 1000-char cap |
+| `session_engine.py` | Session orchestration — phase advancement, turn triggering, prompt assembly |
+| `session_store.py` | Session persistence — run state, template loading/validation, custom template storage |
+| `session_templates/` | Built-in session templates (JSON) — code review, debate, design critique, planning |
 | `router.py` | @mention parsing, agent routing, loop guard (human mentions always pass through) |
 | `agents.py` | Writes trigger queue files for wrapper to pick up |
 | `mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, `chat_claim`, etc.) |

@@ -402,7 +402,7 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                     if not role and current_name != agent_name:
                         role = _fetch_role(server_port, agent_name)
                     if role:
-                        prompt += f" - your role: {role}"
+                        prompt += f"\n\nROLE: {role}"
 
                     # Smart rules injection: first trigger, epoch change, or periodic refresh
                     _token = get_token_fn() if get_token_fn else ""
@@ -418,7 +418,8 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                         )
                         if need_inject:
                             if rules_data["rules"]:
-                                prompt += f" - rules: {'; '.join(rules_data['rules'])}"
+                                rules_text = "; ".join(rules_data["rules"])
+                                prompt += f"\n\nRULES:\n{rules_text}"
                             last_rules_epoch = rules_data["epoch"]
                             _report_rule_sync(server_port, current_name, rules_data["epoch"], _token)
 

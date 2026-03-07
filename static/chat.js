@@ -2080,7 +2080,12 @@ function enterDeleteMode(initialId) {
 
     // Add radio circles to all messages (not joins)
     document.querySelectorAll('.message[data-id]').forEach(el => {
-        if (el.classList.contains('join-msg') || el.classList.contains('system-msg') || el.classList.contains('summary-msg')) return;
+        if (el.classList.contains('join-msg') || el.classList.contains('summary-msg')) return;
+        // system-msg is excluded UNLESS it's a deletable subtype (banners, breadcrumbs, drafts)
+        if (el.classList.contains('system-msg')
+            && !el.classList.contains('session-banner')
+            && !el.classList.contains('session-draft-card')
+            && !el.classList.contains('job-breadcrumb')) return;
         const id = parseInt(el.dataset.id);
         const circle = document.createElement('div');
         circle.className = 'delete-radio' + (deleteSelected.has(id) ? ' selected' : '');
@@ -2093,6 +2098,34 @@ function enterDeleteMode(initialId) {
             if (deleteDragging) toggleDeleteSelect(id, true);
         });
         el.prepend(circle);
+    });
+
+    // Add radio circles to collapsed job-groups (selects all children)
+    document.querySelectorAll('.job-group').forEach(group => {
+        const ids = [...group.querySelectorAll('.job-breadcrumb[data-id]')].map(el => parseInt(el.dataset.id));
+        if (ids.length === 0) return;
+        const circle = document.createElement('div');
+        circle.className = 'delete-radio';
+        circle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const allSelected = ids.every(id => deleteSelected.has(id));
+            ids.forEach(id => {
+                if (allSelected) deleteSelected.delete(id); else deleteSelected.add(id);
+                const child = group.querySelector(`.job-breadcrumb[data-id="${id}"] .delete-radio`);
+                if (child) child.classList.toggle('selected', !allSelected);
+            });
+            circle.classList.toggle('selected', !allSelected);
+            updateDeleteBar();
+            deleteDragging = true;
+        });
+        circle.addEventListener('mouseenter', () => {
+            if (deleteDragging) {
+                ids.forEach(id => deleteSelected.add(id));
+                circle.classList.add('selected');
+                updateDeleteBar();
+            }
+        });
+        group.prepend(circle);
     });
 
     // Show floating delete bar
@@ -2973,10 +3006,10 @@ function renderRulesPanel() {
         return;
     }
 
-    // Group order: active first, drafts second, inactive collapsed
+    // Group order: drafts, active, archive (mirrors jobs: to-do, active, closed)
     const groups = [
-        { key: 'active', label: 'ACTIVE', items: [] },
         { key: 'draft', label: 'DRAFTS', items: [] },
+        { key: 'active', label: 'ACTIVE', items: [] },
         { key: 'archived', label: 'ARCHIVE', items: [] },
     ];
     for (const r of panelRules) {
@@ -3034,6 +3067,8 @@ function renderRulesPanel() {
             if (currentStatus === group.key) return;
             if (group.key === 'active') {
                 ws.send(JSON.stringify({ type: 'rule_activate', id }));
+            } else if (group.key === 'draft') {
+                ws.send(JSON.stringify({ type: 'rule_make_draft', id }));
             } else {
                 ws.send(JSON.stringify({ type: 'rule_deactivate', id }));
             }

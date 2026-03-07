@@ -468,99 +468,63 @@
 
 /* Session draft cards */
 .session-draft-card {
+    justify-content: flex-start;
     padding: 0 !important;
-    margin: 8px 40px;
+    margin: 8px 0;
 }
 
-.session-draft-body {
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 16px;
+.session-proposal-card {
+    max-width: 690px;
+    text-align: left;
+    font-style: normal;
 }
 
-.session-draft-invalid .session-draft-body {
+.session-draft-invalid .session-proposal-card {
     border-color: #f8717160;
+    background: rgba(248, 113, 113, 0.06);
 }
 
-.session-draft-superseded .session-draft-body {
-    opacity: 0.4;
+.session-draft-superseded .session-proposal-card {
     border-style: dashed;
 }
 
-.session-draft-superseded-label {
-    color: var(--text-dim);
-    font-style: italic;
-    font-size: 12px;
-}
-
-.session-draft-header {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 4px;
-}
-
-.session-draft-desc {
-    font-size: 12px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
-}
-
-.session-draft-roles {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-bottom: 8px;
-}
-
-.session-draft-phases {
-    margin-bottom: 8px;
-}
-
-.session-draft-phase {
-    font-size: 12px;
-    color: var(--text);
-    padding: 2px 0;
+.session-proposal-desc {
+    margin-bottom: 10px;
 }
 
 .session-draft-meta {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-bottom: 10px;
+    font-size: 10px;
+    color: color-mix(in srgb, var(--text-dim) 88%, transparent);
+    margin-left: auto;
+    white-space: nowrap;
 }
 
 .session-draft-errors {
     list-style: none;
     padding: 0;
-    margin: 8px 0;
+    margin: 10px 0 0;
 }
 
 .session-draft-errors li {
     font-size: 12px;
     color: #f87171;
-    padding: 2px 0;
+    padding: 3px 0;
+    line-height: 1.4;
 }
 
 .session-draft-errors li::before {
     content: "- ";
 }
 
-.session-draft-actions {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
 .session-draft-btn {
     font-size: 12px;
-    padding: 4px 12px;
-    border-radius: 4px;
+    padding: 5px 14px;
+    border-radius: 6px;
     cursor: pointer;
     border: 1px solid var(--border);
     background: none;
     color: var(--text);
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .session-draft-btn:hover {
@@ -573,83 +537,89 @@
     border-color: var(--accent);
 }
 
-.session-draft-btn.run:hover { opacity: 0.85; }
-
-.session-draft-btn.save {
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.session-draft-btn.save.saved {
-    background: rgba(124, 58, 237, 0.14);
-    color: var(--accent);
-    border-color: rgba(124, 58, 237, 0.35);
-    cursor: default;
+.session-draft-btn.run:hover {
+    opacity: 0.85;
 }
 
 .session-draft-btn.dismiss {
     color: var(--text-dim);
 }
 
-.session-draft-flow {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-bottom: 4px;
-    letter-spacing: 0.3px;
+.session-draft-btn-save.saved {
+    background: rgba(124, 58, 237, 0.14);
+    color: var(--accent);
+    border-color: rgba(124, 58, 237, 0.35);
+    cursor: default;
 }
 
 .session-draft-details {
     border-top: 1px solid var(--border);
-    padding-top: 10px;
-    margin-top: 8px;
-    margin-bottom: 8px;
-}
-
-.session-draft-details-header {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    padding-top: 8px;
     margin-bottom: 6px;
 }
 
 .session-draft-phase-detail {
-    padding: 4px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 0;
     border-bottom: 1px solid var(--border);
 }
 .session-draft-phase-detail:last-child { border-bottom: none; }
 
 .session-draft-phase-num {
+    flex: 0 0 22px;
     font-size: 11px;
-    color: var(--text-dim);
-    margin-right: 4px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.8;
+}
+
+.session-draft-phase-copy {
+    min-width: 0;
+    flex: 1;
+}
+
+.session-draft-phase-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 1px;
 }
 
 .session-draft-phase-name {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text);
-    font-weight: 500;
-}
-.session-draft-phase-name em {
-    font-weight: 400;
-    color: var(--accent);
+    font-weight: 600;
+    line-height: 1.35;
 }
 
-.session-draft-phase-parts {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-left: 8px;
+.session-draft-phase-participants {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    line-height: 1.35;
 }
-.session-draft-phase-parts::before {
-    content: "- ";
+
+.session-draft-phase-participant-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 500;
+    color: #cfc8ea;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .session-draft-phase-prompt {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-dim);
-    margin: 2px 0 0 16px;
-    opacity: 0.8;
+    line-height: 1.45;
+    margin-top: 2px;
     white-space: pre-wrap;
     word-break: break-word;
 }

@@ -28,6 +28,17 @@ let sessionIndicatorTargetChannel = null;
 
 if (!window._messageRenderers) window._messageRenderers = {};
 
+function _renderSessionDraftResolvedCard(label, detail = '') {
+    return `
+        <div class="proposal-card session-proposal-card proposal-resolved">
+            <div class="proposal-header">
+                <span class="proposal-pill">Session Proposal</span>
+            </div>
+            <div class="proposal-title">${window.escapeHtml(label)}</div>
+            ${detail ? `<div class="proposal-body session-proposal-desc">${window.escapeHtml(detail)}</div>` : ''}
+        </div>`;
+}
+
 window._messageRenderers['session_start'] = function (el, msg) {
     el.classList.add('system-msg', 'session-banner', 'session-banner-start');
     const goal = msg.metadata?.goal ? ` -- ${window.escapeHtml(msg.metadata.goal)}` : '';
@@ -55,6 +66,7 @@ window._messageRenderers['session_draft'] = function (el, msg) {
     const draftId = meta.draft_id || '';
     const proposedBy = meta.proposed_by || '?';
     const revision = meta.revision || 1;
+    const proposedByColor = window.getColor ? window.getColor(proposedBy) : 'var(--text-dim)';
 
     // Check if superseded by a newer revision
     const isSuperseded = _isSupersededDraft(draftId, revision);
@@ -65,53 +77,62 @@ window._messageRenderers['session_draft'] = function (el, msg) {
 
     if (isSuperseded) {
         el.classList.add('session-draft-superseded');
-        el.innerHTML = `<div class="session-draft-body"><span class="session-draft-superseded-label">Superseded draft</span></div>`;
+        el.innerHTML = _renderSessionDraftResolvedCard('Superseded draft', `Replaced by revision ${revision}.`);
     } else if (!valid) {
         el.classList.add('session-draft-invalid');
         const errorList = errors.map(e => `<li>${window.escapeHtml(e)}</li>`).join('');
         el.innerHTML = `
-            <div class="session-draft-body">
-                <div class="session-draft-header">Draft from ${window.escapeHtml(proposedBy)} (invalid)</div>
+            <div class="proposal-card session-proposal-card session-proposal-invalid">
+                <div class="proposal-header">
+                    <span class="proposal-pill">Session Proposal</span>
+                    <span class="proposal-author" style="color: ${proposedByColor}">${window.escapeHtml(proposedBy)}</span>
+                </div>
+                <div class="proposal-title">Invalid session draft</div>
+                <div class="proposal-body session-proposal-desc">This draft needs changes before it can be run or saved.</div>
                 <ul class="session-draft-errors">${errorList}</ul>
-                <div class="session-draft-actions">
-                    <button class="session-draft-btn changes" onclick="requestDraftChanges('${window.escapeHtml(draftId)}', '${window.escapeHtml(proposedBy)}', ${msg.id})">Request Changes</button>
-                    <button class="session-draft-btn dismiss" onclick="dismissDraft(${msg.id})">Dismiss</button>
+                <div class="proposal-actions">
+                    <button class="proposal-request-changes" onclick="requestDraftChanges('${window.escapeHtml(draftId)}', '${window.escapeHtml(proposedBy)}', ${msg.id})">Request Changes</button>
+                    <button class="proposal-dismiss" onclick="dismissDraft(${msg.id})">Dismiss</button>
                 </div>
             </div>`;
     } else {
-        const rolesHtml = (tmpl.roles || []).map(r => `<span class="session-role-pill">${window.escapeHtml(r)}</span>`).join(' ');
         const phases = tmpl.phases || [];
         const phasesDetailHtml = phases.map((p, i) => {
-            const parts = (p.participants || []).map(r => window.escapeHtml(r)).join(', ');
+            const parts = (p.participants || [])
+                .map(r => `<span class="session-draft-phase-participant-pill">${window.escapeHtml(r)}</span>`)
+                .join('');
             const promptText = p.prompt ? window.escapeHtml(p.prompt) : '';
             return `<div class="session-draft-phase-detail">
-                <span class="session-draft-phase-num">${i + 1}.</span>
-                <span class="session-draft-phase-name">${window.escapeHtml(p.name)}${p.is_output ? ' <em>(output)</em>' : ''}</span>
-                ${parts ? `<span class="session-draft-phase-parts">${parts}</span>` : ''}
-                ${promptText ? `<div class="session-draft-phase-prompt">${promptText}</div>` : ''}
+                <span class="session-draft-phase-num">${i + 1}</span>
+                <div class="session-draft-phase-copy">
+                    <div class="session-draft-phase-top">
+                        <span class="session-draft-phase-name">${window.escapeHtml(p.name)}</span>
+                        ${parts ? `<span class="session-draft-phase-participants">${parts}</span>` : ''}
+                    </div>
+                    ${promptText ? `<div class="session-draft-phase-prompt">${promptText}</div>` : ''}
+                </div>
             </div>`;
         }).join('');
-        const phasesSummary = phases.map(p => window.escapeHtml(p.name)).join(' -> ');
+        const metaLabel = revision > 1 ? `rev ${revision}` : '';
         el.dataset.draftTemplate = JSON.stringify(tmpl);
         el.dataset.draftMsgId = msg.id;
         el.innerHTML = `
-            <div class="session-draft-body">
-                <div class="session-draft-compact">
-                    <div class="session-draft-header">${window.escapeHtml(tmpl.name || '?')}</div>
-                    ${tmpl.description ? `<div class="session-draft-desc">${window.escapeHtml(tmpl.description)}</div>` : ''}
-                    <div class="session-draft-roles">${rolesHtml}</div>
-                    <div class="session-draft-flow">${phasesSummary}</div>
-                    <div class="session-draft-meta">by ${window.escapeHtml(proposedBy)} | rev ${revision}</div>
+            <div class="proposal-card session-proposal-card">
+                <div class="proposal-header">
+                    <span class="proposal-pill">Session Proposal</span>
+                    <span class="proposal-author" style="color: ${proposedByColor}">${window.escapeHtml(proposedBy)}</span>
+                    ${metaLabel ? `<span class="session-draft-meta">${metaLabel}</span>` : ''}
                 </div>
+                <div class="proposal-title">${window.escapeHtml(tmpl.name || '?')}</div>
+                ${tmpl.description ? `<div class="proposal-body session-proposal-desc">${window.escapeHtml(tmpl.description)}</div>` : ''}
                 <div class="session-draft-details">
-                    <div class="session-draft-details-header">Phases</div>
                     ${phasesDetailHtml}
                 </div>
-                <div class="session-draft-actions">
-                    <button class="session-draft-btn run" onclick="runDraft(${msg.id})">Run</button>
-                    <button class="session-draft-btn save" onclick="saveDraft(${msg.id}, this)">Save Template</button>
-                    <button class="session-draft-btn changes" onclick="requestDraftChanges('${window.escapeHtml(draftId)}', '${window.escapeHtml(proposedBy)}', ${msg.id})">Request Changes</button>
-                    <button class="session-draft-btn dismiss" onclick="dismissDraft(${msg.id})">Dismiss</button>
+                <div class="proposal-actions">
+                    <button class="proposal-accept" onclick="runDraft(${msg.id})">Run</button>
+                    <button class="proposal-request-changes session-draft-btn-save" onclick="saveDraft(${msg.id}, this)">Save Template</button>
+                    <button class="proposal-request-changes" onclick="requestDraftChanges('${window.escapeHtml(draftId)}', '${window.escapeHtml(proposedBy)}', ${msg.id})">Request Changes</button>
+                    <button class="proposal-dismiss" onclick="dismissDraft(${msg.id})">Dismiss</button>
                 </div>
             </div>`;
         // Supersede older revisions of the same draft
@@ -415,11 +436,12 @@ async function sendDesignRequest() {
     const modal = document.getElementById('session-launcher-modal');
     if (modal) modal.remove();
     try {
-        await fetch('/api/sessions/request-draft', {
+        const res = await fetch('/api/sessions/request-draft', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
             body: JSON.stringify({ agent: agent, description: desc, channel: window.activeChannel, sender: window.username }),
         });
+        if (!res.ok) alert('Failed to send design request (HTTP ' + res.status + ')');
     } catch (e) {
         alert('Error: ' + e.message);
     }
@@ -579,16 +601,6 @@ function _isSupersededDraft(draftId, revision) {
     return false;
 }
 
-function toggleDraftExpand(btn) {
-    const body = btn.closest('.session-draft-body');
-    if (!body) return;
-    const details = body.querySelector('.session-draft-details');
-    if (!details) return;
-    const hidden = details.classList.toggle('hidden');
-    btn.innerHTML = hidden ? '&#9660;' : '&#9650;';
-    btn.title = hidden ? 'Show details' : 'Hide details';
-}
-
 function _supersedePreviousDrafts(draftId, currentRevision) {
     if (!draftId) return;
     const allDrafts = document.querySelectorAll('.session-draft-card');
@@ -596,8 +608,10 @@ function _supersedePreviousDrafts(draftId, currentRevision) {
         if (card.dataset.draftId === draftId && parseInt(card.dataset.draftRevision || '0') < currentRevision) {
             if (!card.classList.contains('session-draft-superseded')) {
                 card.classList.add('session-draft-superseded');
-                card.innerHTML = '<div class="session-draft-body"><span class="session-draft-superseded-label">Superseded (rev ' +
-                    card.dataset.draftRevision + ')</span></div>';
+                card.innerHTML = _renderSessionDraftResolvedCard(
+                    `Superseded (rev ${card.dataset.draftRevision})`,
+                    'A newer revision is now the active draft.'
+                );
             }
         }
     }
@@ -767,7 +781,7 @@ async function deleteSessionTemplate(templateId) {
 function requestDraftChanges(draftId, proposedBy, msgId) {
     const el = document.querySelector(`.message[data-id="${msgId}"]`);
     if (!el) return;
-    const actions = el.querySelector('.session-draft-actions');
+    const actions = el.querySelector('.proposal-actions') || el.querySelector('.session-draft-actions');
     if (!actions) return;
 
     // Only allow one inline editor per draft card.
@@ -786,7 +800,7 @@ function requestDraftChanges(draftId, proposedBy, msgId) {
         <textarea class="draft-changes-textarea" rows="2" placeholder="What changes do you want?"></textarea>
         <div class="draft-changes-btns">
             <button class="session-draft-btn run" onclick="submitDraftChanges('${window.escapeHtml(draftId)}', '${window.escapeHtml(proposedBy)}', ${msgId})">Send</button>
-            <button class="session-draft-btn dismiss" onclick="this.closest('.draft-changes-input').remove()">Cancel</button>
+            <button class="session-draft-btn dismiss" onclick="dismissDraftChanges(this)">Cancel</button>
         </div>
     `;
     actions.after(inputRow);
@@ -826,11 +840,20 @@ function submitDraftChanges(draftId, proposedBy, msgId) {
 }
 
 function dismissDraft(msgId) {
-    const el = document.querySelector(`.message[data-id="${msgId}"]`);
-    if (el) {
-        el.classList.add('session-draft-superseded');
-        el.innerHTML = '<div class="session-draft-body"><span class="session-draft-superseded-label">Dismissed</span></div>';
-    }
+    fetch(`/api/messages/${msgId}/demote`, {
+        method: 'POST',
+        headers: { 'X-Session-Token': window.SESSION_TOKEN },
+    }).then((res) => {
+        if (!res.ok) alert('Failed to dismiss session proposal (HTTP ' + res.status + ')');
+    }).catch((e) => {
+        console.error('Failed to demote session draft:', e);
+        alert('Failed to dismiss session proposal');
+    });
+}
+
+function dismissDraftChanges(btn) {
+    const row = btn.closest('.draft-changes-input');
+    if (row) row.remove();
 }
 
 function highlightSessionOutput(messageId) {
@@ -894,6 +917,7 @@ window.showSessionLauncher = showSessionLauncher;
 window.runDraft = runDraft;
 window.saveDraft = saveDraft;
 window.dismissDraft = dismissDraft;
+window.dismissDraftChanges = dismissDraftChanges;
 window.requestDraftChanges = requestDraftChanges;
 window.submitDraftChanges = submitDraftChanges;
 window.toggleEndSessionConfirm = toggleEndSessionConfirm;
@@ -904,7 +928,7 @@ window.launchSessionWithCast = launchSessionWithCast;
 window.launchDraftSession = launchDraftSession;
 window.sendDesignRequest = sendDesignRequest;
 window.syncSessionCastRole = syncSessionCastRole;
-window.toggleDraftExpand = toggleDraftExpand;
+
 window.toggleDeleteSessionTemplateConfirm = toggleDeleteSessionTemplateConfirm;
 window.scrollToSessionOutput = scrollToSessionOutput;
 

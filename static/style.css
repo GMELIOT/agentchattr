@@ -768,7 +768,11 @@ main#timeline {
     transition: transform 0.2s ease;
 }
 
-#messages.delete-mode .message:not(.join-msg):not(.system-msg):not(.summary-msg) > :not(.delete-radio) {
+#messages.delete-mode .message:not(.join-msg):not(.system-msg):not(.summary-msg) > :not(.delete-radio),
+#messages.delete-mode .message.session-banner > :not(.delete-radio),
+#messages.delete-mode .message.session-draft-card > :not(.delete-radio),
+#messages.delete-mode .message.job-breadcrumb > :not(.delete-radio),
+#messages.delete-mode .job-group > :not(.delete-radio) {
     transform: translateX(30px);
 }
 

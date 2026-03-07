@@ -1106,6 +1106,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     rules.deactivate(int(rid))
                 continue
 
+            elif event.get("type") == "rule_make_draft":
+                rid = event.get("id")
+                if rid is not None:
+                    rules.make_draft(int(rid))
+                continue
+
             elif event.get("type") in ("decision_edit", "rule_edit"):
                 rid = event.get("id")
                 if rid is not None:
@@ -1396,22 +1402,58 @@ async def get_jobs(channel: str = "", status: str = ""):
 
 @app.post("/api/messages/{msg_id}/demote")
 async def demote_proposal(msg_id: int):
-    """Demote a job_proposal message back to a regular chat message."""
+    """Demote a proposal-style message back to a regular chat message."""
     msg = store.get_by_id(msg_id)
     if not msg:
         return JSONResponse({"error": "message not found"}, status_code=404)
-    if msg.get("type") != "job_proposal":
+    msg_type = msg.get("type")
+    if msg_type not in {"job_proposal", "session_draft"}:
         return JSONResponse({"error": "not a proposal"}, status_code=400)
-    # Convert proposal body to plain text, strip proposal metadata
     meta = msg.get("metadata", {})
-    body_text = meta.get("body", "")
-    title = meta.get("title", "")
-    plain_text = f"**{title}**\n\n{body_text}" if title else body_text or msg.get("text", "")
-    updated = store.update_message(msg_id, {
-        "type": "chat",
-        "text": plain_text,
-        "metadata": {},
-    })
+    updated_fields = {"type": "chat", "metadata": {}}
+
+    if msg_type == "job_proposal":
+        body_text = meta.get("body", "")
+        title = meta.get("title", "")
+        plain_text = f"**{title}**\n\n{body_text}" if title else body_text or msg.get("text", "")
+        updated_fields["text"] = plain_text
+    else:
+        tmpl = meta.get("template")
+        errors = meta.get("errors", []) or []
+        proposed_by = meta.get("proposed_by") or msg.get("sender", "system")
+        parts = []
+
+        if isinstance(tmpl, dict):
+            name = str(tmpl.get("name", "")).strip()
+            desc = str(tmpl.get("description", "")).strip()
+            if name:
+                parts.append(f"**{name}**")
+            if desc:
+                parts.append(desc)
+            phases = tmpl.get("phases") or []
+            if phases:
+                lines = []
+                for i, ph in enumerate(phases, 1):
+                    ph_name = ph.get("name", f"Round {i}")
+                    participants = ", ".join(ph.get("participants", []))
+                    line = f"{i}. {ph_name}"
+                    if participants:
+                        line += f" -- {participants}"
+                    prompt = (ph.get("prompt") or "").strip()
+                    if prompt:
+                        line += f"\n   {prompt}"
+                    lines.append(line)
+                parts.append("\n".join(lines))
+        else:
+            label = str(msg.get("text", "")).strip() or "Session draft"
+            parts.append(label)
+            if errors:
+                parts.append("\n".join(f"- {e}" for e in errors))
+
+        updated_fields["sender"] = proposed_by
+        updated_fields["text"] = "\n\n".join(p for p in parts if p).strip()
+
+    updated = store.update_message(msg_id, updated_fields)
     if updated:
         # Broadcast the updated message to all clients
         payload = json.dumps({"type": "edit", "message": updated})

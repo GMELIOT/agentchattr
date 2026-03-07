@@ -313,6 +313,8 @@ function connectWebSocket() {
 
     ws.onmessage = (e) => {
         const event = JSON.parse(e.data);
+        // Emit through Hub for modules to subscribe (PR 1 seam)
+        Hub.emit(event.type, event);
         if (event.type === 'message') {
             // Play notification sound for new messages from others (not joins, not when focused)
             if (soundEnabled && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {

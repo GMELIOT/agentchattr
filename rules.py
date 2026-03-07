@@ -152,8 +152,12 @@ class RuleStore:
     def make_draft(self, rule_id: int) -> dict | None:
         with self._lock:
             for r in self._rules:
-                if r["id"] == rule_id and r.get("status") == "pending":
+                if r["id"] == rule_id:
+                    was_active = r.get("status") == "active"
                     r["status"] = "draft"
+                    r.pop("archived_at", None)
+                    if was_active:
+                        self._bump_epoch()
                     self._save()
                     result = dict(r)
                     break
@@ -166,9 +170,11 @@ class RuleStore:
         with self._lock:
             for r in self._rules:
                 if r["id"] == rule_id and r.get("status") in ("active", "proposed", "draft"):
+                    was_active = r.get("status") == "active"
                     r["status"] = "archived"
                     r["archived_at"] = time.time()
-                    self._bump_epoch()
+                    if was_active:
+                        self._bump_epoch()
                     self._save()
                     result = dict(r)
                     break

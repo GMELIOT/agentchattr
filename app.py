@@ -181,7 +181,17 @@ def _install_security_middleware(token: str, cfg: dict):
             # Static assets, index page, and uploaded images are public.
             # The index page injects the token client-side via same-origin script.
             # Uploads use random filenames and have path-traversal protection.
-            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/heartbeat/", "/api/register", "/api/deregister/", "/api/roles")):
+            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/roles")):
+                return await call_next(request)
+
+            # Agent registration/heartbeat: loopback only (no remote agent minting).
+            if path.startswith(("/api/register", "/api/deregister/", "/api/heartbeat/")):
+                client_ip = request.client.host if request.client else ""
+                if client_ip not in ("127.0.0.1", "::1", "localhost"):
+                    return JSONResponse(
+                        {"error": f"forbidden: agent registration is restricted to local loopback. Source {client_ip} is not allowed."},
+                        status_code=403,
+                    )
                 return await call_next(request)
 
             # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
@@ -219,7 +229,6 @@ def _install_security_middleware(token: str, cfg: dict):
 def configure(cfg: dict, session_token: str = ""):
     global store, rules, summaries, jobs, router, agents, registry, session_store, session_engine, config
     config = cfg
-
     # --- Security: store the session token and install middleware ---
     _install_security_middleware(session_token, cfg)
 
@@ -299,11 +308,12 @@ def configure(cfg: dict, session_token: str = ""):
     _known_online: set[str] = set()  # agents we've seen join — track for leave messages
     _posted_leave: set[str] = set()  # agents we've already posted a leave for — debounce
 
-    _known_active: set[str] = set()
+    _known_active = set()
 
     def _background_checks():
         import time as _time
         import mcp_bridge
+
         while True:
             _time.sleep(3)
             # Recovery flags
@@ -748,6 +758,12 @@ async def _handle_new_message(msg: dict):
     chat_msg = f"{sender}: {text}" if text else ""
     custom_prompt = text if is_hidden_session_request else ""
 
+    # Session turn guard: if a session is active on this channel and the sender
+    # is an agent, only allow triggering the agent whose turn it is.
+    # Human @mentions are always allowed (the session engine handles pausing).
+    sender_is_agent = sender in known_agents
+    allowed_agent = session_engine.get_allowed_agent(channel) if session_engine and sender_is_agent else None
+
     import mcp_bridge
     for target in targets:
         # Skip pending instances — they haven't been named/claimed yet
@@ -755,6 +771,9 @@ async def _handle_new_message(msg: dict):
             inst = registry.get_instance(target)
             if inst and inst.get("state") == "pending":
                 continue
+        # Session guard: suppress out-of-turn agent triggers
+        if allowed_agent and target != allowed_agent:
+            continue
         if not mcp_bridge.is_online(target):
             store.add("system", f"{target} appears offline — message queued.", msg_type="system", channel=channel)
         if agents.is_available(target):
@@ -1106,6 +1125,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     rules.deactivate(int(rid))
                 continue
 
+            elif event.get("type") == "rule_make_draft":
+                rid = event.get("id")
+                if rid is not None:
+                    rules.make_draft(int(rid))
+                continue
+
             elif event.get("type") in ("decision_edit", "rule_edit"):
                 rid = event.get("id")
                 if rid is not None:
@@ -1396,22 +1421,58 @@ async def get_jobs(channel: str = "", status: str = ""):
 
 @app.post("/api/messages/{msg_id}/demote")
 async def demote_proposal(msg_id: int):
-    """Demote a job_proposal message back to a regular chat message."""
+    """Demote a proposal-style message back to a regular chat message."""
     msg = store.get_by_id(msg_id)
     if not msg:
         return JSONResponse({"error": "message not found"}, status_code=404)
-    if msg.get("type") != "job_proposal":
+    msg_type = msg.get("type")
+    if msg_type not in {"job_proposal", "session_draft"}:
         return JSONResponse({"error": "not a proposal"}, status_code=400)
-    # Convert proposal body to plain text, strip proposal metadata
     meta = msg.get("metadata", {})
-    body_text = meta.get("body", "")
-    title = meta.get("title", "")
-    plain_text = f"**{title}**\n\n{body_text}" if title else body_text or msg.get("text", "")
-    updated = store.update_message(msg_id, {
-        "type": "chat",
-        "text": plain_text,
-        "metadata": {},
-    })
+    updated_fields = {"type": "chat", "metadata": {}}
+
+    if msg_type == "job_proposal":
+        body_text = meta.get("body", "")
+        title = meta.get("title", "")
+        plain_text = f"**{title}**\n\n{body_text}" if title else body_text or msg.get("text", "")
+        updated_fields["text"] = plain_text
+    else:
+        tmpl = meta.get("template")
+        errors = meta.get("errors", []) or []
+        proposed_by = meta.get("proposed_by") or msg.get("sender", "system")
+        parts = []
+
+        if isinstance(tmpl, dict):
+            name = str(tmpl.get("name", "")).strip()
+            desc = str(tmpl.get("description", "")).strip()
+            if name:
+                parts.append(f"**{name}**")
+            if desc:
+                parts.append(desc)
+            phases = tmpl.get("phases") or []
+            if phases:
+                lines = []
+                for i, ph in enumerate(phases, 1):
+                    ph_name = ph.get("name", f"Round {i}")
+                    participants = ", ".join(ph.get("participants", []))
+                    line = f"{i}. {ph_name}"
+                    if participants:
+                        line += f" -- {participants}"
+                    prompt = (ph.get("prompt") or "").strip()
+                    if prompt:
+                        line += f"\n   {prompt}"
+                    lines.append(line)
+                parts.append("\n".join(lines))
+        else:
+            label = str(msg.get("text", "")).strip() or "Session draft"
+            parts.append(label)
+            if errors:
+                parts.append("\n".join(f"- {e}" for e in errors))
+
+        updated_fields["sender"] = proposed_by
+        updated_fields["text"] = "\n\n".join(p for p in parts if p).strip()
+
+    updated = store.update_message(msg_id, updated_fields)
     if updated:
         # Broadcast the updated message to all clients
         payload = json.dumps({"type": "edit", "message": updated})
@@ -2179,6 +2240,116 @@ def _auto_cast(roles: list[str], online_agents: list[str], started_by: str) -> d
         cast[role] = agent
 
     return cast
+
+
+# --- Version check (GitHub release notifier) ---
+
+_version_cache: dict = {"data": None, "fetched_at": 0.0}
+_VERSION_CACHE_TTL = 1800  # 30 minutes
+
+
+def _read_local_version() -> str:
+    """Read version from VERSION file in project root."""
+    vfile = Path(__file__).parent / "VERSION"
+    try:
+        return vfile.read_text().strip()
+    except Exception:
+        return ""
+
+
+def _detect_install_kind() -> str:
+    """Detect how this copy was installed: official_git, fork, or unknown."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+            cwd=Path(__file__).parent,
+        )
+        url = result.stdout.strip().lower()
+        if "bcurts/agentchattr" in url:
+            return "official_git"
+        elif url:
+            return "fork"
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _fetch_latest_release() -> dict | None:
+    """Fetch latest release from GitHub API, with 30-min cache."""
+    import time
+    import urllib.request
+
+    now = time.time()
+    if _version_cache["data"] and (now - _version_cache["fetched_at"]) < _VERSION_CACHE_TTL:
+        return _version_cache["data"]
+
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/bcurts/agentchattr/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "agentchattr"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            result = {
+                "tag": data.get("tag_name", ""),
+                "url": data.get("html_url", ""),
+            }
+            _version_cache["data"] = result
+            _version_cache["fetched_at"] = now
+            return result
+    except Exception:
+        return _version_cache.get("data")
+
+
+def _compare_versions(current: str, latest_tag: str) -> str:
+    """Compare version strings. Returns 'behind', 'current', or 'unknown'."""
+    # Strip leading 'v' from tag
+    latest = latest_tag.lstrip("v")
+    if not current or not latest:
+        return "unknown"
+    try:
+        from packaging.version import Version
+        if Version(current) < Version(latest):
+            return "behind"
+        return "current"
+    except Exception:
+        return "unknown"
+
+
+@app.get("/api/version_check")
+async def version_check():
+    """Check for newer releases on GitHub."""
+    current = _read_local_version()
+    loop = asyncio.get_event_loop()
+    release = await loop.run_in_executor(None, _fetch_latest_release)
+
+    if not release or not release.get("tag"):
+        return JSONResponse({"current": current, "latest": "", "state": "unknown", "url": ""})
+
+    latest_tag = release["tag"]
+    install_kind = _detect_install_kind()
+    comparison = _compare_versions(current, latest_tag)
+
+    if comparison == "behind":
+        if install_kind == "official_git":
+            state = "update_available"
+        elif install_kind == "fork":
+            state = "upstream_update"
+        else:
+            state = "unknown"
+    elif comparison == "current":
+        state = "current"
+    else:
+        state = "unknown"
+
+    return JSONResponse({
+        "current": current,
+        "latest": latest_tag,
+        "state": state,
+        "url": release.get("url", ""),
+    })
 
 
 @app.get("/uploads/{filename}")

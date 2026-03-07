@@ -90,6 +90,14 @@ class SessionEngine:
             return None
         return self._enrich(session)
 
+    def get_allowed_agent(self, channel: str) -> str | None:
+        """If a session is active on this channel, return the agent whose turn it is.
+        Returns None if no session is active (meaning all agents are allowed)."""
+        session = self._store.get_active(channel)
+        if not session or session.get("state") not in ("active", "waiting"):
+            return None
+        return self._get_expected_agent(session)
+
     def list_active(self) -> list[dict]:
         """List all active/waiting/paused sessions, enriched for the frontend."""
         active = []

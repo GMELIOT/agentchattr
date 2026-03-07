@@ -1379,7 +1379,7 @@ main#timeline {
 .channel-ctx-menu button.danger { color: var(--error-color); }
 .channel-ctx-menu button.danger:hover { background: var(--error-soft); }
 
-/* --- Rules panel (right sidebar) --- */
+/* --- Sidebar panels (rules + jobs shared) --- */
 
 #rules-panel {
     --panel-w: 320px;
@@ -1404,7 +1404,8 @@ main#timeline {
 }
 
 /* Full-height drag grip on left edge */
-.rules-grip {
+.rules-grip,
+.jobs-grip {
     position: absolute;
     left: 0;
     top: 0;
@@ -1420,11 +1421,14 @@ main#timeline {
 }
 
 .rules-grip:hover,
-.rules-grip.dragging {
+.rules-grip.dragging,
+.jobs-grip:hover,
+.jobs-grip.dragging {
     background: var(--accent);
 }
 
-.rules-grip::after {
+.rules-grip::after,
+.jobs-grip::after {
     content: '';
     width: 2px;
     height: 32px;
@@ -1432,7 +1436,8 @@ main#timeline {
     border-right: 1px solid var(--white-15);
 }
 
-.rules-header {
+.rules-header,
+.jobs-header {
     display: flex;
     align-items: center;
     padding: var(--sb-padding);
@@ -1492,7 +1497,8 @@ main#timeline {
     flex-direction: column;
 }
 
-.rules-empty {
+.rules-empty,
+.jobs-empty {
     padding: 24px 16px;
     color: var(--text-dim);
     font-size: var(--sb-meta-fs);
@@ -1504,8 +1510,9 @@ main#timeline {
     flex: 1;
 }
 
-/* Rules group headers — mirrors .jobs-group-header */
-.rules-group-header {
+/* Sidebar group headers (shared by rules + jobs panels) */
+.rules-group-header,
+.jobs-group-header {
     padding: var(--sb-padding);
     padding-bottom: 4px;
     font-size: var(--sb-label-fs);
@@ -1517,58 +1524,75 @@ main#timeline {
     margin-bottom: 2px;
 }
 
-.rules-group-header.draft {
+.rules-group-header.draft,
+.jobs-group-header.open {
     color: var(--text-dim);
     border-bottom-color: var(--sb-card-border-color);
 }
 
-.rules-group-header.active {
+.rules-group-header.active,
+.jobs-group-header.done {
     color: var(--success);
     border-bottom-color: var(--success-soft);
 }
 
-.rules-group-header.archived {
+.rules-group-header.archived,
+.jobs-group-header.archived {
     color: rgba(239, 68, 68, 0.5);
     border-bottom-color: var(--danger-soft);
+}
+
+/* Collapsible group behavior (rules: .archived, jobs: .collapsible) */
+.rules-group-header.archived,
+.jobs-group-header.collapsible {
     cursor: pointer;
     user-select: none;
     transition: color var(--sb-motion-fast);
 }
 
-.rules-group-header.archived:hover { color: var(--text); }
+.rules-group-header.archived:hover,
+.jobs-group-header.collapsible:hover { color: var(--text); }
 
-.rules-group-header.archived::before {
+.rules-group-header.archived::before,
+.jobs-group-header.collapsible::before {
     content: '▾ ';
     font-size: 9px;
 }
 
-.rules-group-header.archived.collapsed::before {
+.rules-group-header.archived.collapsed::before,
+.jobs-group-header.collapsed::before {
     content: '▸ ';
 }
 
-.rules-group-header.empty-group { opacity: 0.35; }
+.rules-group-header.empty-group,
+.jobs-group-header.empty-group { opacity: 0.35; }
 
-.rules-group-header.drop-target {
+.rules-group-header.drop-target,
+.jobs-group-header.drop-target {
     background: rgba(109, 138, 235, 0.12);
     border-bottom-color: var(--accent);
     color: var(--accent) !important;
     opacity: 1;
 }
 
-.rules-group-items {
+.rules-group-items,
+.jobs-group-items {
     display: grid;
     grid-template-rows: 1fr;
     transition: grid-template-rows 0.25s ease;
 }
-.rules-group-items.collapsed {
+.rules-group-items.collapsed,
+.jobs-group-items.collapsed {
     grid-template-rows: 0fr;
 }
-.rules-group-items-inner {
+.rules-group-items-inner,
+.jobs-group-items-inner {
     overflow: hidden;
     min-height: 0;
 }
 
-.rules-group-items .rule-card:last-child { border-bottom: none; }
+.rules-group-items .rule-card:last-child,
+.jobs-group-items .job-card:last-child { border-bottom: none; }
 
 .rules-centered-hint {
     display: flex;
@@ -1604,16 +1628,20 @@ main#timeline {
     gap: 6px;
 }
 
-.rule-status-dot {
+.rule-status-dot,
+.job-status-dot {
     width: 6px;
     height: 6px;
     border-radius: var(--radius-full);
     flex-shrink: 0;
 }
 
-.rule-status-dot.draft { background: var(--text-dim); }
-.rule-status-dot.active { background: var(--success); }
-.rule-status-dot.archived { background: var(--text-dim); opacity: 0.4; }
+.rule-status-dot.draft,
+.job-status-dot.open { background: var(--text-dim); }
+.rule-status-dot.active,
+.job-status-dot.done { background: var(--success); }
+.rule-status-dot.archived,
+.job-status-dot.archived { background: var(--text-dim); opacity: 0.4; }
 
 .rule-text {
     font-size: var(--sb-title-fs);
@@ -1736,31 +1764,9 @@ main#timeline {
 }
 
 
-/* --- Rules badge (header button) --- */
+/* --- Header button badges --- */
 
-.rules-badge {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    background: var(--pending);
-    color: var(--text-on-accent);
-    font-size: 10px;
-    font-weight: 700;
-    min-width: 16px;
-    height: 16px;
-    border-radius: var(--radius-lg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 3px;
-}
-
-.rules-badge.hidden { display: none; }
-
-#rules-toggle {
-    position: relative;
-}
-
+.rules-badge,
 .jobs-badge {
     position: absolute;
     top: -4px;
@@ -1778,8 +1784,10 @@ main#timeline {
     padding: 0 3px;
 }
 
+.rules-badge.hidden,
 .jobs-badge.hidden { display: none; }
 
+#rules-toggle,
 #jobs-toggle {
     position: relative;
 }

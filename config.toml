@@ -41,6 +41,12 @@ mcp_settings_path = ".qwen/settings.json"
 mcp_transport = "http"
 inject_delay = 1.0
 
+[agents.kilo]
+command = "kilo"
+cwd = ".."
+color = "#ff6b35"
+label = "Kilo"
+
 [routing]
 # "none" = only route on explicit @mention. "all" = route to all agents by default.
 default = "none"

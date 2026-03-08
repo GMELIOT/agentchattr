@@ -2756,8 +2756,11 @@ footer {
     outline: none;
     min-height: 40px;
     max-height: 120px;
+    overflow-y: auto;
+    scrollbar-width: none;
     transition: border-color 0.2s;
 }
+#input::-webkit-scrollbar { display: none; }
 
 #input:focus {
     border-color: var(--accent);
@@ -2815,13 +2818,432 @@ footer {
     flex-shrink: 0;
 }
 
+/* Split send + clock button */
+.send-group {
+    display: flex;
+    align-items: stretch;
+    flex-shrink: 0;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    position: relative;
+}
+
+.send-group #send {
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    padding-right: 14px;
+}
+
+.send-clock {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 0 9px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.send-clock:hover { background: color-mix(in srgb, var(--accent) 80%, white); }
+
 #send:hover { opacity: 0.85; }
 #send:active { opacity: 0.7; }
+
+.send-group.inactive #send,
+.send-group.inactive .send-clock {
+    background: color-mix(in srgb, var(--accent) 35%, var(--bg-header));
+    color: color-mix(in srgb, var(--text-on-accent) 40%, transparent);
+    cursor: default;
+}
+.send-group.inactive #send:hover { opacity: 1; }
+.send-group.inactive .send-clock:hover {
+    background: color-mix(in srgb, var(--accent) 35%, var(--bg-header));
+}
+
+/* Schedule popover */
+.schedule-popover {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 16px;
+    background: var(--bg-header);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
+    width: 300px;
+    z-index: 30;
+    animation: picker-in 0.15s ease-out;
+}
+.schedule-popover.hidden { display: none; }
+
+.sched-pop-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.sched-pop-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color 0.15s;
+}
+.sched-pop-close:hover { color: var(--text); }
+
+.sched-pop-body {
+    padding: 8px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sched-pop-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sched-pop-label {
+    font-size: 13px;
+    color: var(--text-dim);
+    min-width: 42px;
+    flex-shrink: 0;
+}
+
+.sched-pop-select {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    min-width: 0;
+}
+.sched-pop-select:focus { border-color: var(--accent); }
+
+.sched-pop-select-sm { flex: 0 1 auto; min-width: 0; width: auto; }
+.sched-time-colon { color: var(--text-dim); font-size: 14px; font-weight: 600; }
+.sched-time-row { gap: 4px; }
+
+.sched-pop-num {
+    width: 56px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 4px 7px 10px;
+    outline: none;
+    text-align: center;
+    -moz-appearance: textfield;
+}
+.sched-pop-num:focus { border-color: var(--accent); }
+
+/* Custom spinner buttons */
+.sched-pop-num::-webkit-inner-spin-button,
+.sched-pop-num::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.sched-num-wrap {
+    display: flex;
+    align-items: stretch;
+    position: relative;
+}
+.sched-num-wrap .sched-pop-num {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+    border-right: none;
+    width: 46px;
+}
+.sched-num-btns {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+.sched-num-btns button {
+    background: var(--bg-input);
+    border: none;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    line-height: 1;
+    transition: background 0.1s, color 0.1s;
+}
+.sched-num-btns button:last-child { border-bottom: none; }
+.sched-num-btns button:hover { background: var(--accent-hover); color: var(--accent); }
+
+.sched-pop-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Custom checkbox */
+.sched-pop-check input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--bg-input);
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+}
+.sched-pop-check input:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+.sched-pop-check input:checked::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 5px;
+    height: 9px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+.sched-pop-check input:hover { border-color: var(--accent); }
+
+/* Dim "When" row when recurring is active */
+.sched-dimmed {
+    opacity: 0.3;
+    pointer-events: none;
+    transition: opacity 0.2s;
+}
+
+.sched-recurring-fields.hidden { display: none; }
+
+.sched-pop-error {
+    font-size: 11px;
+    color: var(--warning);
+    padding: 0 16px 4px;
+}
+.sched-pop-error.hidden { display: none; }
+
+.sched-pop-submit:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.sched-pop-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 16px 14px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.sched-pop-cancel {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.sched-pop-cancel:hover { background: var(--white-06); }
+
+.sched-pop-submit {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 20px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.sched-pop-submit:hover { opacity: 0.85; }
 
 .input-hint {
     font-size: 11px;
     color: var(--text-dim);
     margin-top: 6px;
+}
+
+/* --- Schedule strip (composer-adjacent) --- */
+
+#schedules-bar {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-subtle);
+    overflow: hidden;
+    animation: schedulesFadeIn 0.25s ease;
+}
+#schedules-bar.hidden { display: none; }
+
+@keyframes schedulesFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.schedules-bar-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    color: var(--text-dim);
+    transition: color 0.15s;
+}
+.schedules-bar-summary:hover { color: var(--text); }
+
+.schedules-icon { flex-shrink: 0; opacity: 0.7; }
+.schedules-count { font-weight: 500; color: var(--text); font-size: 12px; }
+.schedules-next { font-size: 11px; opacity: 0.7; }
+.schedules-see-all {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.schedules-see-all:hover { text-decoration: underline; }
+
+.schedules-bar-list {
+    border-top: 1px solid var(--border);
+    max-height: 200px;
+    overflow-y: auto;
+    transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+.schedules-bar-list.hidden {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    border-top: none;
+}
+
+.schedule-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.schedule-row:last-child { border-bottom: none; }
+
+.schedule-targets {
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+.schedule-prompt {
+    flex: 1;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+.schedule-interval {
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-size: 11px;
+}
+.schedule-toggle {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 13px;
+    color: var(--text-muted);
+    opacity: 0.6;
+    transition: opacity 0.15s, color 0.15s;
+}
+.schedule-toggle:hover { opacity: 1; }
+.schedule-row.paused .schedule-toggle { color: var(--warning); opacity: 1; }
+.schedule-delete {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s;
+}
+.schedule-delete:hover { opacity: 1; color: var(--danger); }
+
+.schedule-toggle-inline,
+.schedule-delete-inline {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s;
+}
+.schedule-toggle-inline { margin-left: auto; }
+.schedule-delete-inline { margin-left: 4px; }
+.schedule-toggle-inline:hover,
+.schedule-delete-inline:hover { opacity: 1; }
+.schedule-toggle-inline.paused { color: var(--warning); opacity: 1; }
+.schedule-delete-inline:hover { color: var(--danger); }
+
+.schedule-row.paused .schedule-targets,
+.schedule-row.paused .schedule-prompt,
+.schedule-row.paused .schedule-interval {
+    opacity: 0.4;
+}
+
+/* Green flash on schedule creation */
+#schedules-bar {
+    transition: background 0.3s ease, border-color 0.3s ease;
+}
+#schedules-bar.sched-flash {
+    background: color-mix(in srgb, var(--success) 12%, var(--bg-subtle));
+    border-color: color-mix(in srgb, var(--success) 30%, var(--border));
 }
 
 /* --- Slash command menu --- */

@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentchattr</title>
-    <link rel="stylesheet" href="/static/style.css?v=193">
-    <link rel="stylesheet" href="/static/sessions.css?v=193">
-    <link rel="stylesheet" href="/static/jobs.css?v=193">
+    <link rel="stylesheet" href="/static/style.css?v=223">
+    <link rel="stylesheet" href="/static/sessions.css?v=223">
+    <link rel="stylesheet" href="/static/jobs.css?v=223">
     <link rel="icon" href="/static/favicon.ico">
 </head>
 <body>
@@ -66,7 +66,13 @@
             </div>
             <div class="settings-field">
                 <label for="setting-hops">Loop guard</label>
-                <input type="number" id="setting-hops" min="1" max="50" value="4" title="Max agent-to-agent hops before pausing">
+                <div class="sched-num-wrap">
+                    <input type="number" id="setting-hops" class="sched-pop-num" min="1" max="50" value="4" title="Max agent-to-agent hops before pausing">
+                    <div class="sched-num-btns">
+                        <button type="button" onclick="stepNumInput('setting-hops',1)" tabindex="-1">&#9650;</button>
+                        <button type="button" onclick="stepNumInput('setting-hops',-1)" tabindex="-1">&#9660;</button>
+                    </div>
+                </div>
             </div>
             <div class="settings-field">
                 <label for="setting-history">History</label>
@@ -89,7 +95,7 @@
             <div class="settings-field">
                 <label for="setting-rules-refresh">Rule refresh</label>
                 <select id="setting-rules-refresh" title="How often to re-send active rules to agents">
-                    <option value="0">When rules change</option>
+                    <option value="0">On rule changes</option>
                     <option value="5">Every 5 triggers</option>
                     <option value="10" selected>Every 10 triggers</option>
                     <option value="20">Every 20 triggers</option>
@@ -194,6 +200,18 @@
         <div id="scroll-anchor" class="hidden" onclick="scrollToBottom()"><span class="unread-badge">0</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8l5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
 
         <footer>
+            <div id="schedules-bar" class="hidden">
+                <div class="schedules-bar-summary">
+                    <svg class="schedules-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+                        <path d="M8 4v4.5l3 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="schedules-count" id="schedules-count"></span>
+                    <span class="schedules-next" id="schedules-next"></span>
+                    <a class="schedules-see-all" onclick="toggleSchedulesExpand()">See all</a>
+                </div>
+                <div class="schedules-bar-list hidden" id="schedules-list"></div>
+            </div>
             <div id="mention-toggles"></div>
             <div id="slash-menu" class="hidden"></div>
             <div id="mention-menu" class="hidden"></div>
@@ -217,7 +235,60 @@
                         <line x1="8" y1="23" x2="16" y2="23"/>
                     </svg>
                 </button>
-                <button id="send" onclick="sendMessage()">Send</button>
+                <div class="send-group">
+                    <button id="send" onclick="sendMessage()">Send</button>
+                    <button id="schedule-btn" class="send-clock" onclick="toggleSchedulePopover(event)" title="Schedule message">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M12 6v6.5l4 2"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="schedule-popover" class="schedule-popover hidden">
+                    <div class="sched-pop-header">
+                        <span>Schedule message</span>
+                        <button class="sched-pop-close" onclick="closeSchedulePopover()">&times;</button>
+                    </div>
+                    <div class="sched-pop-body">
+                        <div class="sched-pop-row">
+                            <label class="sched-pop-label">When</label>
+                            <select id="sched-date" class="sched-pop-select"></select>
+                        </div>
+                        <div class="sched-pop-row sched-time-row">
+                            <label class="sched-pop-label">At</label>
+                            <select id="sched-hour" class="sched-pop-select sched-pop-select-sm"></select>
+                            <span class="sched-time-colon">:</span>
+                            <select id="sched-minute" class="sched-pop-select sched-pop-select-sm"></select>
+                            <select id="sched-ampm" class="sched-pop-select sched-pop-select-sm"></select>
+                        </div>
+                        <div class="sched-pop-row">
+                            <label class="sched-pop-check">
+                                <input type="checkbox" id="sched-recurring" onchange="toggleRecurringFields()">
+                                <span>Recurring</span>
+                            </label>
+                        </div>
+                        <div class="sched-pop-row sched-recurring-fields hidden" id="sched-recurring-fields">
+                            <label class="sched-pop-label">Every</label>
+                            <div class="sched-num-wrap">
+                                <input type="number" id="sched-interval-val" class="sched-pop-num" value="1" min="1" max="99">
+                                <div class="sched-num-btns">
+                                    <button type="button" onclick="stepSchedNum(1)" tabindex="-1">&#9650;</button>
+                                    <button type="button" onclick="stepSchedNum(-1)" tabindex="-1">&#9660;</button>
+                                </div>
+                            </div>
+                            <select id="sched-interval-unit" class="sched-pop-select">
+                                <option value="minutes">minutes</option>
+                                <option value="hours" selected>hours</option>
+                                <option value="days">days</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="sched-pop-error hidden" id="sched-pop-error"></div>
+                    <div class="sched-pop-footer">
+                        <button class="sched-pop-cancel" onclick="closeSchedulePopover()">Cancel</button>
+                        <button class="sched-pop-submit" onclick="submitSchedulePopover()">Schedule</button>
+                    </div>
+                </div>
             </div>
             <div class="input-hint">
                 Enter to send &middot; Shift+Enter for newline &middot; Paste/drop images &middot; Mic for voice &middot; Type / or @ for autocomplete
@@ -230,12 +301,12 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/core.js?v=193"></script>
-    <script src="/static/store.js?v=193"></script>
-    <script src="/static/sessions.js?v=193"></script>
-    <script src="/static/jobs.js?v=193"></script>
-    <script src="/static/channels.js?v=193"></script>
-    <script src="/static/rules-panel.js?v=193"></script>
-    <script src="/static/chat.js?v=193"></script>
+    <script src="/static/core.js?v=223"></script>
+    <script src="/static/store.js?v=223"></script>
+    <script src="/static/sessions.js?v=223"></script>
+    <script src="/static/jobs.js?v=223"></script>
+    <script src="/static/channels.js?v=223"></script>
+    <script src="/static/rules-panel.js?v=223"></script>
+    <script src="/static/chat.js?v=223"></script>
 </body>
 </html>

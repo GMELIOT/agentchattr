@@ -55,13 +55,21 @@ def _write_json_mcp_settings(config_file: Path, url: str, transport: str = "http
     servers = existing.get("mcpServers", {})
     # Gemini CLI uses "httpUrl" for streamable-http, "url" for SSE
     if transport in ("http", "streamable-http"):
-        entry: dict = {"httpUrl": url, "trust": True}
+        entry: dict = {"type": "http", "httpUrl": url, "trust": True}
     else:
-        entry = {"url": url, "trust": True}
+        entry = {"type": transport, "url": url, "trust": True}
     if token:
         entry["headers"] = {"Authorization": f"Bearer {token}"}
     servers[SERVER_NAME] = entry
     existing["mcpServers"] = servers
+
+    # Enable folder trust so ~/.gemini/trustedFolders.json is respected
+    security = existing.get("security", {})
+    folder_trust = security.get("folderTrust", {})
+    folder_trust["enabled"] = True
+    security["folderTrust"] = folder_trust
+    existing["security"] = security
+
     config_file.write_text(json.dumps(existing, indent=2) + "\n", "utf-8")
     return config_file
 

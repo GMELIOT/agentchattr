@@ -38,9 +38,14 @@ def _write_json_mcp_settings(config_file: Path, url: str, transport: str = "http
                               *, token: str = "") -> Path:
     """Write/merge a settings-style JSON file with nested mcpServers config.
 
-    Preserves existing servers in the file — only updates the agentchattr entry."""
+    Preserves existing servers in the file — only updates the agentchattr entry.
+
+    Gemini CLI 0.32+ expects:
+      - "httpUrl" key (not "url") for streamable-http transport
+      - "url" key for SSE transport
+      - "trust": true to skip per-call approval prompts
+    """
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    # Read existing file to preserve other servers
     existing: dict = {}
     if config_file.exists():
         try:
@@ -48,7 +53,11 @@ def _write_json_mcp_settings(config_file: Path, url: str, transport: str = "http
         except Exception:
             pass
     servers = existing.get("mcpServers", {})
-    entry: dict = {"type": transport, "url": url}
+    # Gemini CLI uses "httpUrl" for streamable-http, "url" for SSE
+    if transport in ("http", "streamable-http"):
+        entry: dict = {"httpUrl": url, "trust": True}
+    else:
+        entry = {"url": url, "trust": True}
     if token:
         entry["headers"] = {"Authorization": f"Bearer {token}"}
     servers[SERVER_NAME] = entry
@@ -113,7 +122,7 @@ _BUILTIN_DEFAULTS: dict[str, dict] = {
     "gemini": {
         "mcp_inject": "env",
         "mcp_env_var": "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-        "mcp_transport": "sse",
+        "mcp_transport": "http",  # streamable-http; SSE has blocking issues in Gemini 0.32.x
     },
     "codex": {
         "mcp_inject": "proxy_flag",
@@ -222,6 +231,40 @@ def _apply_mcp_inject(
         launch_args = expanded.split()
 
     return launch_args, inject_env, settings_path
+
+
+def _ensure_gemini_folder_trusted(project_dir: Path) -> None:
+    """Add project_dir as TRUST_FOLDER in ~/.gemini/trustedFolders.json.
+
+    Gemini CLI blocks ALL MCPs (including system-settings ones) for untrusted
+    folders. A more-specific TRUST_FOLDER entry overrides any parent-level
+    DO_NOT_TRUST rule, so we always write the exact cwd we're launching in.
+    Respects GEMINI_CLI_TRUSTED_FOLDERS_PATH env override if set.
+    """
+    trusted_path_env = os.environ.get("GEMINI_CLI_TRUSTED_FOLDERS_PATH", "")
+    if trusted_path_env:
+        trusted_file = Path(trusted_path_env)
+    else:
+        trusted_file = Path.home() / ".gemini" / "trustedFolders.json"
+
+    try:
+        data: dict = {}
+        if trusted_file.exists():
+            try:
+                data = json.loads(trusted_file.read_text("utf-8"))
+            except Exception:
+                data = {}
+
+        folder_key = str(project_dir)
+        if data.get(folder_key) == "TRUST_FOLDER":
+            return  # already trusted — nothing to do
+
+        data[folder_key] = "TRUST_FOLDER"
+        trusted_file.parent.mkdir(parents=True, exist_ok=True)
+        trusted_file.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
+        print(f"  Trusted folder for Gemini MCPs: {folder_key}")
+    except Exception as exc:
+        print(f"  Warning: could not update Gemini trusted folders: {exc}")
 
 
 def _build_provider_launch(
@@ -586,6 +629,12 @@ def main():
     command = resolved
 
     project_dir = (ROOT / cwd).resolve()
+
+    # Gemini: ensure the project directory is trusted so MCPs are allowed.
+    # Gemini blocks ALL MCPs for untrusted folders — even system-settings ones.
+    if agent == "gemini" or inject_cfg.get("mcp_inject") == "env":
+        _ensure_gemini_folder_trusted(project_dir)
+
     launch_args, env, inject_env, mcp_settings_path = _build_provider_launch(
         agent=agent,
         agent_cfg=agent_cfg,

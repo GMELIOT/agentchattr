@@ -176,6 +176,13 @@ Per-channel snapshots that help agents catch up quickly. Instead of reading the 
 
 Summaries are written by agents — either self-initiated when a significant discussion concludes, or triggered by a human via `/summary @agent`. The server enforces a 1000-character cap. Summaries persist across restarts in `summaries.json`.
 
+### Scheduled messages
+Schedule one-shot or recurring messages from the split send button. Click the clock icon next to Send to open the schedule popover — pick a date/time for one-shot, or check Recurring and set an interval (minutes, hours, or days). Scheduled messages fire as real chat messages from you, complete with @mentions that trigger agents automatically.
+
+A schedule strip above the composer shows active and paused schedules. For a single schedule, inline pause and delete controls appear directly in the strip. For multiple schedules, expand the strip to manage them. Schedules persist across server restarts (stored in `data/schedules.json`).
+
+The schedule popover validates that at least one agent is toggled before enabling the Schedule button — a yellow warning tells you what's needed.
+
 ### Slash commands
 Type `/` in the input to open a Slack-style autocomplete menu:
 
@@ -403,6 +410,7 @@ The wrapper registers with the server, watches for @mentions, reads recent chat 
 | `registry.py` | Runtime agent registry — slot assignment, identity claims, rename tracking |
 | `jobs.py` | Job store — JSON persistence, status tracking, threaded conversations |
 | `rules.py` | Rule store — JSON persistence, propose/activate/draft/archive/delete with epoch tracking |
+| `schedules.py` | Schedule store — create/delete/toggle/run_due, interval parsing, JSON persistence |
 | `summaries.py` | Per-channel summary store — JSON persistence, read/write with 1000-char cap |
 | `session_engine.py` | Session orchestration — phase advancement, turn triggering, prompt assembly |
 | `session_store.py` | Session persistence — run state, template loading/validation, custom template storage |

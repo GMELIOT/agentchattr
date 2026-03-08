@@ -28,6 +28,7 @@ INCLUDE_FILES = [
     "session_engine.py",
     "session_store.py",
     "store.py",
+    "schedules.py",
     "summaries.py",
     "wrapper.py",
     "wrapper_api.py",

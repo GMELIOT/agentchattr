@@ -872,6 +872,21 @@ function updateScrollAnchor() {
             badge.style.display = unreadCount > 0 ? 'flex' : 'none';
         }
     }
+    repositionScrollAnchor();
+}
+
+function repositionScrollAnchor() {
+    const anchor = document.getElementById('scroll-anchor');
+    if (!anchor) return;
+    const footer = document.querySelector('footer');
+    if (footer) {
+        anchor.style.bottom = (footer.offsetHeight + 12) + 'px';
+    }
+    const timeline = document.getElementById('timeline');
+    if (timeline) {
+        const rect = timeline.getBoundingClientRect();
+        anchor.style.left = (rect.left + rect.width / 2) + 'px';
+    }
 }
 
 // --- Agents ---
@@ -1962,6 +1977,7 @@ function renderAttachments() {
         `;
         container.appendChild(wrap);
     });
+    repositionScrollAnchor();
 }
 
 function removeAttachment(index) {
@@ -1972,6 +1988,7 @@ function removeAttachment(index) {
 function clearAttachments() {
     pendingAttachments = [];
     document.getElementById('attachments').innerHTML = '';
+    repositionScrollAnchor();
 }
 
 // --- Scroll tracking ---
@@ -1997,6 +2014,13 @@ function setupScroll() {
         }
     });
     resizeObserver.observe(messages);
+
+    // Reposition scroll-anchor when window resizes or sidebars toggle
+    window.addEventListener('resize', repositionScrollAnchor);
+    const contentArea = document.querySelector('.content-area');
+    if (contentArea) {
+        new ResizeObserver(repositionScrollAnchor).observe(contentArea);
+    }
 }
 
 // --- Reply ---
@@ -2213,7 +2237,7 @@ function enterDeleteMode(initialId) {
     // Show floating delete bar
     showDeleteBar();
     updateDeleteBar();
-    document.getElementById('scroll-anchor').style.bottom = '180px';
+    repositionScrollAnchor();
 }
 
 function toggleDeleteSelect(id, dragForceSelect) {
@@ -2286,7 +2310,7 @@ function exitDeleteMode() {
         setTimeout(() => el.remove(), 200);
     });
 
-    document.getElementById('scroll-anchor').style.bottom = '';
+    repositionScrollAnchor();
 }
 
 // Auto-scroll while dragging near edges
@@ -2702,8 +2726,7 @@ function renderSchedulesBar() {
         bar.classList.add('hidden');
         bar.classList.remove('expanded');
         document.getElementById('schedules-list')?.classList.add('hidden');
-        const anchor = document.getElementById('scroll-anchor');
-        if (anchor) anchor.style.bottom = '';
+        repositionScrollAnchor();
         return;
     }
 
@@ -2771,9 +2794,8 @@ function renderSchedulesBar() {
         if (seeAllLink) seeAllLink.style.display = '';
     }
 
-    // Adjust scroll-anchor so it sits above the schedules bar
-    const anchor = document.getElementById('scroll-anchor');
-    if (anchor) anchor.style.bottom = (130 + bar.offsetHeight + 8) + 'px';
+    // Adjust scroll-anchor so it sits above the footer
+    repositionScrollAnchor();
 
     // Expanded list
     const list = document.getElementById('schedules-list');

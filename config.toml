@@ -39,7 +39,6 @@ label = "Qwen"
 mcp_inject = "settings_file"
 mcp_settings_path = ".qwen/settings.json"
 mcp_transport = "http"
-mcp_url_key = "httpUrl"
 inject_delay = 1.0
 
 [routing]
@@ -74,7 +73,6 @@ max_size_mb = 10
 #   mcp_inject = "settings_file"
 #   mcp_settings_path = ".qwen/settings.json"
 #   mcp_transport = "http"
-#   mcp_url_key = "httpUrl"           # Qwen uses 'httpUrl' instead of type+url
 #
 # Example: CLI with env var for settings
 #   [agents.mycli]

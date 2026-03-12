@@ -9,6 +9,17 @@ if not exist ".venv" (
 )
 call .venv\Scripts\activate.bat
 
+REM Pre-flight: check that qwen CLI is installed
+where qwen >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo   Error: "qwen" was not found on PATH.
+    echo   Install it first: npm install -g @qwen-code/qwen-code
+    echo.
+    pause
+    exit /b 1
+)
+
 REM Start server if not already running, then wait for it
 netstat -ano | findstr :8300 | findstr LISTENING >nul 2>&1
 if %errorlevel% neq 0 (
@@ -21,4 +32,9 @@ if %errorlevel% neq 0 (
     goto :wait_server
 )
 
-python wrapper.py qwen --yolo -i "When asked for a reply or to answer, YOU MUST USE the mcp of agentchattr. When talking about a chat, we are speaking about interaction with tools provided by mcp of agentchattr. The human NEVER SEES your usual CLI interface. Just consider this, other instructions will follow." 
+python wrapper.py qwen --yolo -i "When asked for a reply or to answer, YOU MUST USE the mcp of agentchattr. When talking about a chat, we are speaking about interaction with tools provided by mcp of agentchattr. The human NEVER SEES your usual CLI interface. Just consider this, other instructions will follow."
+if %errorlevel% neq 0 (
+    echo.
+    echo   Agent exited unexpectedly. Check the output above.
+    pause
+)

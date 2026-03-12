@@ -36,7 +36,7 @@ SERVER_NAME = "agentchattr"
 # ---------------------------------------------------------------------------
 
 def _write_json_mcp_settings(config_file: Path, url: str, transport: str = "http",
-                              *, token: str = "", url_key: str | None = None) -> Path:
+                              *, token: str = "") -> Path:
     """Write/merge a settings-style JSON file with nested mcpServers config.
 
     Preserves existing servers in the file — only updates the agentchattr entry.
@@ -204,8 +204,7 @@ def _apply_mcp_inject(
             base = Path(project_dir) if project_dir else Path.cwd()
             target = base / target
         settings_path = _write_json_mcp_settings(target, server_url,
-                                                  transport=transport, token=token,
-                                                  url_key=inject_cfg.get("mcp_url_key"))
+                                                  transport=transport, token=token)
         # Optionally set an env var pointing to the settings file
         env_var = inject_cfg.get("mcp_env_var")
         if env_var:
@@ -219,7 +218,6 @@ def _apply_mcp_inject(
         settings_path = _write_json_mcp_settings(
             config_dir / f"{instance_name}-settings.json",
             server_url, transport=transport, token=token,
-            url_key=inject_cfg.get("mcp_url_key"),
         )
         inject_env[env_var] = str(settings_path)
 

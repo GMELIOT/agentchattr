@@ -2022,6 +2022,87 @@ function setupScroll() {
     if (contentArea) {
         new ResizeObserver(repositionScrollAnchor).observe(contentArea);
     }
+
+    // Collapse "Support development" to heart-only when the expanded pill would crowd tabs.
+    const supportLink = document.querySelector('.channel-support');
+    const supportLabel = document.querySelector('.support-label');
+    const channelBar = document.getElementById('channel-bar');
+    const channelBarRight = document.querySelector('.channel-bar-right');
+    const tabs = document.getElementById('channel-tabs');
+    const addBtn = document.getElementById('channel-add-btn');
+    if (supportLink && supportLabel && channelBar && channelBarRight && tabs) {
+        const COMFORT_MARGIN = 16;
+        const EXPAND_HYSTERESIS = 24;
+        let isCompact = supportLink.classList.contains('compact');
+
+        function applySupportCompact(compact) {
+            if (isCompact === compact) return false;
+            isCompact = compact;
+            supportLink.classList.toggle('compact', compact);
+            supportLabel.style.display = compact ? 'none' : '';
+            return true;
+        }
+
+        function measureRightWidth(compact) {
+            const prevCompact = supportLink.classList.contains('compact');
+            const prevDisplay = supportLabel.style.display;
+            supportLink.classList.toggle('compact', compact);
+            supportLabel.style.display = compact ? 'none' : '';
+            const width = Math.ceil(channelBarRight.getBoundingClientRect().width);
+            supportLink.classList.toggle('compact', prevCompact);
+            supportLabel.style.display = prevDisplay;
+            return width;
+        }
+
+        function getTabsContentWidth() {
+            const styles = getComputedStyle(tabs);
+            const gap = parseFloat(styles.columnGap || styles.gap || '0') || 0;
+            const children = Array.from(tabs.children);
+            let width = 0;
+            children.forEach((child, index) => {
+                width += child.getBoundingClientRect().width;
+                if (index < children.length - 1) width += gap;
+            });
+            return Math.ceil(width);
+        }
+
+        function checkSupportCollapse() {
+            const available = Math.ceil(channelBar.clientWidth);
+            const tabsWidth = getTabsContentWidth();
+            const addWidth = addBtn ? Math.ceil(addBtn.getBoundingClientRect().width + 8) : 0;
+            const expandedRightWidth = measureRightWidth(false);
+            const expandedNeeded = tabsWidth + addWidth + expandedRightWidth + COMFORT_MARGIN;
+
+            if (!isCompact && expandedNeeded > available) {
+                if (applySupportCompact(true)) requestAnimationFrame(checkSupportCollapse);
+                return;
+            }
+
+            if (isCompact && expandedNeeded + EXPAND_HYSTERESIS < available) {
+                if (applySupportCompact(false)) requestAnimationFrame(checkSupportCollapse);
+            }
+        }
+
+        const scheduleSupportRecheck = () => requestAnimationFrame(checkSupportCollapse);
+        window.addEventListener('resize', scheduleSupportRecheck);
+
+        const supportResizeObserver = new ResizeObserver(scheduleSupportRecheck);
+        supportResizeObserver.observe(channelBar);
+        supportResizeObserver.observe(tabs);
+        supportResizeObserver.observe(channelBarRight);
+
+        new MutationObserver(scheduleSupportRecheck).observe(tabs, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style'],
+        });
+
+        requestAnimationFrame(() => {
+            checkSupportCollapse();
+            setTimeout(checkSupportCollapse, 0);
+        });
+    }
 }
 
 // --- Reply ---

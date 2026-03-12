@@ -500,11 +500,12 @@ header h1 {
 
 /* Right-side pills in channel bar */
 .channel-bar-right {
-    position: absolute;
-    right: 16px;
+    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
+    padding-left: 8px;
 }
 
 .channel-support {
@@ -518,7 +519,13 @@ header h1 {
     border-radius: 10px;
     background: rgba(244, 114, 182, 0.06);
     transition: background 0.15s, box-shadow 0.15s;
+    overflow: hidden;
+    min-width: 24px;
+    flex-shrink: 1;
 }
+
+
+.channel-support.compact { padding: 3px 6px; }
 
 .channel-support:hover {
     background: rgba(244, 114, 182, 0.14);
@@ -754,7 +761,7 @@ main#timeline {
     border-top-left-radius: 4px;
     padding: 8px 14px;
     max-width: 85%;
-    min-width: 80px;
+    min-width: 200px;
     overflow-wrap: break-word;
     position: relative;
 }
@@ -1179,9 +1186,7 @@ main#timeline {
 /* --- Channel bar --- */
 
 #channel-bar {
-    position: relative;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
     align-items: center;
     padding: 0 16px;
     background: var(--bg-header);
@@ -1192,12 +1197,14 @@ main#timeline {
 }
 
 #channel-tabs {
-    grid-column: 2;
+    flex: 1;
+    min-width: 0;
     display: flex;
     gap: 2px;
     overflow-x: auto;
     scrollbar-width: none;
     align-items: center;
+    justify-content: center;
 }
 
 #channel-tabs::-webkit-scrollbar { display: none; }
@@ -1317,10 +1324,8 @@ main#timeline {
 .channel-tab-actions .ch-edit-btn:hover { color: var(--text); }
 .channel-tab-actions .ch-delete-btn:hover { color: var(--error-color); }
 
-/* Add button — sits in the 3rd grid column to the right of tabs */
+/* Add button — sits after tabs */
 .channel-add {
-    grid-column: 3;
-    justify-self: start;
     margin-left: 8px;
     background: none;
     border: none;

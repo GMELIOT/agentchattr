@@ -212,6 +212,9 @@ function showChannelRenameDialog(oldName) {
     const tabs = document.getElementById('channel-tabs');
     tabs.querySelector('.channel-inline-create')?.remove();
 
+    // Find the tab being renamed so we can insert the input in its place
+    const targetTab = tabs.querySelector(`.channel-tab[data-channel="${oldName}"]`);
+
     const wrapper = document.createElement('div');
     wrapper.className = 'channel-inline-create';
 
@@ -225,6 +228,11 @@ function showChannelRenameDialog(oldName) {
     input.maxLength = 20;
     input.value = oldName;
     wrapper.appendChild(input);
+
+    const cleanup = () => {
+        wrapper.remove();
+        if (targetTab) targetTab.style.display = '';
+    };
 
     const confirm = document.createElement('button');
     confirm.className = 'confirm-btn';
@@ -241,7 +249,7 @@ function showChannelRenameDialog(oldName) {
                 Store.set('activeChannel', newName);
             }
         }
-        wrapper.remove();
+        cleanup();
     };
     wrapper.appendChild(confirm);
 
@@ -249,18 +257,24 @@ function showChannelRenameDialog(oldName) {
     cancel.className = 'cancel-btn';
     cancel.innerHTML = '&#10005;';
     cancel.title = 'Cancel';
-    cancel.onclick = () => wrapper.remove();
+    cancel.onclick = cleanup;
     wrapper.appendChild(cancel);
 
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); confirm.click(); }
-        if (e.key === 'Escape') wrapper.remove();
+        if (e.key === 'Escape') cleanup();
     });
     input.addEventListener('input', () => {
         input.value = input.value.toLowerCase().replace(/[^a-z0-9\-]/g, '');
     });
 
-    tabs.appendChild(wrapper);
+    // Insert inline next to the tab, hide the original tab
+    if (targetTab) {
+        targetTab.style.display = 'none';
+        targetTab.insertAdjacentElement('afterend', wrapper);
+    } else {
+        tabs.appendChild(wrapper);
+    }
     input.select();
 }
 

@@ -24,6 +24,7 @@ let channelList = ['general'];
 let channelUnread = {};  // { channelName: count }
 let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
+let colorOverrides = JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}');
 let schedulesList = [];  // array of schedule objects from server
 
 // Expose globals that extracted modules (sessions.js, jobs.js) read via window.*
@@ -829,9 +830,15 @@ function getColor(sender) {
     const s = sender.toLowerCase();
     if (s === 'system') return 'var(--system-color)';
     const resolved = resolveAgent(s);
-    if (resolved) return agentConfig[resolved].color;
+    if (resolved) {
+        if (colorOverrides[resolved]) return colorOverrides[resolved];
+        return agentConfig[resolved].color;
+    }
+    // Check overrides for unresolved names too
+    if (colorOverrides[s]) return colorOverrides[s];
     // Fall back to base agent colors (for historical messages from offline agents)
     const base = s.replace(/-\d+$/, '');
+    if (colorOverrides[base]) return colorOverrides[base];
     if (base in baseColors) return baseColors[base].color;
     return 'var(--user-color)';
 }
@@ -845,7 +852,7 @@ function colorMentions(textHtml) {
         }
         const resolved = resolveAgent(lower);
         if (resolved) {
-            const color = agentConfig[resolved].color;
+            const color = getColor(resolved);
             return `<span class="mention" style="color: ${color}">@${name}</span>`;
         }
         // Non-agent mention (e.g. @ben, @user) — use user color
@@ -1089,7 +1096,7 @@ function buildStatusPills() {
         if (cfg.state === 'pending') pill.classList.add('pending');
         pill.id = `status-${name}`;
         pill.title = `@${name}`;  // Tooltip: canonical name for manual @-typing
-        pill.style.setProperty('--agent-color', cfg.color || '#4ade80');
+        pill.style.setProperty('--agent-color', colorOverrides[name] || cfg.color || '#4ade80');
         pill.innerHTML = `<span class="status-dot"></span><span class="status-label">${escapeHtml(cfg.label || name)}</span>`;
         // Left-click to open pill popover (rename + role)
         pill.addEventListener('click', (e) => {
@@ -1272,6 +1279,18 @@ function showPillPopover(pillEl, opts) {
                 <input type="text" class="pill-popover-custom-input" placeholder="Custom role..." maxlength="20" />
             </div>
         </div>
+        <div class="pill-popover-section">
+            <label class="pill-popover-label">Color</label>
+            <div class="pill-popover-colors">
+                ${['#da7756','#10a37f','#4285f4','#8b5cf6','#f59e0b','#ef4444','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1','#14b8a6','#ff6b35','#1783ff'].map(c =>
+                    `<button class="color-swatch ${(colorOverrides[opts.name] || opts.color || '').toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`
+                ).join('')}
+            </div>
+            <div class="pill-popover-color-custom">
+                <input type="color" class="pill-popover-color-input" value="${colorOverrides[opts.name] || opts.color || '#888888'}" title="Pick custom color" />
+                <button class="pill-popover-color-reset" title="Reset to default">Reset</button>
+            </div>
+        </div>
     `;
 
     const inputEl = popover.querySelector('.pill-popover-input');
@@ -1349,6 +1368,58 @@ function showPillPopover(pillEl, opts) {
         }
         if (e.key === 'Escape') { closePopover(); e.preventDefault(); }
     });
+
+    // --- Color picker handlers ---
+    const applyColorOverride = (color) => {
+        colorOverrides[opts.name] = color;
+        localStorage.setItem('agentchattr-color-overrides', JSON.stringify(colorOverrides));
+        // Update pill color
+        const pillToUpdate = document.getElementById(`status-${opts.name}`);
+        if (pillToUpdate) pillToUpdate.style.setProperty('--agent-color', color);
+        popover.style.setProperty('--agent-color', color);
+        // Recolor all messages
+        recolorMessages();
+        // Rebuild mention toggles with new colors
+        buildMentionToggles();
+        // Update active swatch
+        popover.querySelectorAll('.color-swatch').forEach(s => {
+            s.classList.toggle('active', s.dataset.color.toLowerCase() === color.toLowerCase());
+        });
+        // Sync the native color input
+        const colorInput = popover.querySelector('.pill-popover-color-input');
+        if (colorInput) colorInput.value = color;
+    };
+
+    popover.querySelectorAll('.color-swatch').forEach(swatch => {
+        swatch.addEventListener('click', (e) => {
+            e.stopPropagation();
+            applyColorOverride(swatch.dataset.color);
+        });
+    });
+
+    const colorInput = popover.querySelector('.pill-popover-color-input');
+    if (colorInput) {
+        colorInput.addEventListener('input', (e) => {
+            applyColorOverride(e.target.value);
+        });
+    }
+
+    const resetBtn = popover.querySelector('.pill-popover-color-reset');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            delete colorOverrides[opts.name];
+            localStorage.setItem('agentchattr-color-overrides', JSON.stringify(colorOverrides));
+            const defaultColor = opts.color || '#888';
+            const pillToUpdate = document.getElementById(`status-${opts.name}`);
+            if (pillToUpdate) pillToUpdate.style.setProperty('--agent-color', defaultColor);
+            popover.style.setProperty('--agent-color', defaultColor);
+            recolorMessages();
+            buildMentionToggles();
+            popover.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            if (colorInput) colorInput.value = defaultColor;
+        });
+    }
 
     document.body.appendChild(popover);
 
@@ -2699,7 +2770,7 @@ function buildMentionToggles() {
         btn.dataset.agent = name;
         btn.textContent = `@${cfg.label || name}`;
         btn.title = `@${name}`;  // Tooltip: canonical name
-        btn.style.setProperty('--agent-color', cfg.color);
+        btn.style.setProperty('--agent-color', colorOverrides[name] || cfg.color);
         // Restore active state for mentions that survived the rebuild
         if (activeMentions.has(name)) {
             btn.classList.add('active');

@@ -2762,6 +2762,65 @@ pre:hover .code-copy-btn { opacity: 1; }
 .pill-popover-custom-input:focus { border-color: var(--accent); outline: none; }
 .pill-popover-custom-input::placeholder { color: var(--text-dim); }
 
+/* --- Pill popover: color picker --- */
+.pill-popover-colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.color-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    padding: 0;
+    outline: none;
+}
+.color-swatch:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.25);
+}
+.color-swatch.active {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px var(--accent, #888);
+    transform: scale(1.15);
+}
+.pill-popover-color-custom {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.pill-popover-color-input {
+    width: 32px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: none;
+    cursor: pointer;
+    padding: 1px;
+}
+.pill-popover-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.pill-popover-color-input::-webkit-color-swatch { border: none; border-radius: 4px; }
+.pill-popover-color-input::-moz-color-swatch { border: none; border-radius: 4px; }
+.pill-popover-color-reset {
+    background: var(--white-06);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.pill-popover-color-reset:hover {
+    background: var(--white-10);
+    color: var(--text);
+}
+
 /* --- Slash command hint --- */
 
 #input.slash-hint-active::placeholder {

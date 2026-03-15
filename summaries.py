@@ -3,6 +3,7 @@
 import json
 import time
 import threading
+import uuid
 from pathlib import Path
 
 MAX_CHARS = 1000
@@ -41,7 +42,8 @@ class SummaryStore:
         with self._lock:
             return {ch: dict(s) for ch, s in self._summaries.items()}
 
-    def write(self, channel: str, text: str, author: str, message_id: int = 0) -> dict | None:
+    def write(self, channel: str, text: str, author: str, message_id: int = 0,
+              uid: str | None = None, updated_at: float | None = None) -> dict | None:
         text = text.strip()
         if not text:
             return None
@@ -49,9 +51,10 @@ class SummaryStore:
             return None  # Caller should inform the agent
         with self._lock:
             entry = {
+                "uid": uid or str(uuid.uuid4()),
                 "text": text,
                 "author": author,
-                "updated_at": time.time(),
+                "updated_at": updated_at if updated_at is not None else time.time(),
                 "message_id": message_id,
             }
             self._summaries[channel] = entry

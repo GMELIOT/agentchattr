@@ -3,6 +3,7 @@
 import json
 import time
 import threading
+import uuid
 from pathlib import Path
 
 
@@ -108,23 +109,30 @@ class JobStore:
     def create(self, title: str, job_type: str, channel: str,
                created_by: str, anchor_msg_id: int | None = None,
                assignee: str | None = None,
-               body: str | None = None) -> dict:
+               body: str | None = None,
+               uid: str | None = None,
+               status: str | None = None,
+               created_at: float | None = None,
+               updated_at: float | None = None) -> dict:
         """Create a new job. Returns the job dict."""
         with self._lock:
+            st = status or "done"
+            now = time.time()
             a = {
                 "id": self._next_id,
+                "uid": uid or str(uuid.uuid4()),
                 "type": job_type,
                 "title": title.strip()[:120],
                 "body": (body or "").strip()[:1000],
-                "status": "done",
+                "status": st,
                 "channel": channel,
                 "created_by": created_by,
                 "assignee": assignee or "",
                 "anchor_msg_id": anchor_msg_id,
                 "messages": [],
-                "created_at": time.time(),
-                "updated_at": time.time(),
-                "sort_order": self._next_sort_order_locked("done"),
+                "created_at": created_at or now,
+                "updated_at": updated_at or now,
+                "sort_order": self._next_sort_order_locked(st),
             }
             self._next_id += 1
             self._jobs.append(a)
@@ -187,18 +195,23 @@ class JobStore:
 
     def add_message(self, job_id: int, sender: str, text: str,
                     attachments: list | None = None,
-                    msg_type: str = "chat") -> dict | None:
+                    msg_type: str = "chat",
+                    uid: str | None = None,
+                    timestamp: float | None = None,
+                    time_str: str | None = None) -> dict | None:
         """Add a message to a job's conversation. Returns the message."""
         with self._lock:
             for a in self._jobs:
                 if a["id"] == job_id:
                     msg_id = len(a["messages"])
+                    ts = timestamp if timestamp is not None else time.time()
                     msg = {
                         "id": msg_id,
+                        "uid": uid or str(uuid.uuid4()),
                         "sender": sender,
                         "text": text.strip(),
-                        "time": time.strftime("%H:%M:%S"),
-                        "timestamp": time.time(),
+                        "time": time_str or time.strftime("%H:%M:%S"),
+                        "timestamp": ts,
                         "attachments": attachments or [],
                     }
                     if msg_type != "chat":

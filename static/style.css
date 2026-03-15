@@ -439,6 +439,54 @@ header h1 {
     flex-shrink: 0;
 }
 
+.settings-history-btns {
+    display: flex;
+    gap: 6px;
+}
+.settings-btn {
+    background: var(--white-06);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.settings-btn:hover {
+    background: var(--white-10);
+    color: var(--text);
+}
+.settings-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* --- Toast notifications --- */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--bg-2, #1e1e2e);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    padding: 10px 20px;
+    font-size: 13px;
+    font-family: inherit;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    pointer-events: none;
+    max-width: 500px;
+    text-align: center;
+}
+.toast--visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast--success { border-color: #10a37f; }
+.toast--error { border-color: #ef4444; }
+
 #sound-settings {
     display: flex;
     gap: 12px;
@@ -502,9 +550,17 @@ header h1 {
 .channel-bar-right {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 8px;
-    flex-shrink: 0;
     padding-left: 8px;
+    min-width: 0;
+    overflow: hidden;
+    container-type: inline-size;
+}
+/* Collapse support label to heart-only when the right column gets tight */
+@container (max-width: 170px) {
+    .support-label { display: none; }
+    .channel-support { padding: 3px 6px; }
 }
 
 .channel-support {
@@ -518,9 +574,8 @@ header h1 {
     border-radius: 10px;
     background: rgba(244, 114, 182, 0.06);
     transition: background 0.15s, box-shadow 0.15s;
-    overflow: hidden;
-    min-width: 24px;
-    flex-shrink: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 
@@ -1185,7 +1240,8 @@ main#timeline {
 /* --- Channel bar --- */
 
 #channel-bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
     padding: 0 16px;
     background: var(--bg-header);
@@ -1195,8 +1251,11 @@ main#timeline {
     z-index: 1;
 }
 
+.channel-bar-left-spacer {
+    /* Empty grid column 1 balances right side for true centering */
+}
+
 .channel-main {
-    flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
@@ -2903,6 +2962,10 @@ footer {
     object-fit: cover;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
+    cursor: pointer;
+}
+#attachments .attachment-preview img:hover {
+    border-color: var(--accent);
 }
 
 #attachments .attachment-preview .remove-btn {

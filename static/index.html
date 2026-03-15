@@ -106,6 +106,15 @@
             <div class="settings-field">
                 <div id="sound-settings"></div>
             </div>
+            <div class="settings-divider"></div>
+            <div class="settings-field">
+                <label>Project History</label>
+                <div class="settings-history-btns">
+                    <button class="settings-btn" onclick="exportHistory()">Export History</button>
+                    <button class="settings-btn" id="import-history-btn" onclick="document.getElementById('import-file').click()">Import History</button>
+                    <input type="file" id="import-file" accept=".zip" style="display:none" onchange="importHistory(this)">
+                </div>
+            </div>
         </div>
 
         <div id="pins-panel" class="hidden">
@@ -116,6 +125,7 @@
         </div>
 
         <div id="channel-bar">
+            <div class="channel-bar-left-spacer" aria-hidden="true"></div>
             <div class="channel-main">
                 <div id="channel-tabs"></div>
                 <button id="channel-add-btn" class="channel-add" onclick="showChannelCreateDialog()" title="Add channel">+</button>

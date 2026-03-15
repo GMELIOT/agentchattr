@@ -561,6 +561,9 @@ function connectWebSocket() {
                 const _clearDbgAfter = _clearDbgList ? _clearDbgList.children.length : -1;
                 console.log('CLEAR_DEBUG after clear (next frame), jobs-panel-children=' + _clearDbgAfter);
             });
+        } else if (event.type === 'reload') {
+            // Server requests full page reload (e.g. after import)
+            location.reload();
         }
     };
 
@@ -1811,6 +1814,92 @@ function setupSettingsKeys() {
     }
 }
 
+// --- Toast notifications ---
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('toast--visible'));
+    setTimeout(() => {
+        toast.classList.remove('toast--visible');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// --- Export / Import ---
+
+async function exportHistory() {
+    try {
+        const resp = await fetch('/api/export', {
+            headers: { 'X-Session-Token': SESSION_TOKEN },
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            showToast(err.error || 'Export failed', 'error');
+            return;
+        }
+        const blob = await resp.blob();
+        const disposition = resp.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="(.+?)"/);
+        const filename = match ? match[1] : 'agentchattr-export.zip';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        const counts = [];
+        // Parse counts from manifest if possible, or just show success
+        showToast('History exported', 'success');
+    } catch (e) {
+        showToast('Export failed: ' + e.message, 'error');
+    }
+}
+
+async function importHistory(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = ''; // Reset so same file can be picked again
+    const btn = document.getElementById('import-history-btn');
+    const origText = btn.textContent;
+    btn.textContent = 'Importing...';
+    btn.disabled = true;
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const resp = await fetch('/api/import', {
+            method: 'POST',
+            headers: { 'X-Session-Token': SESSION_TOKEN },
+            body: formData,
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+            showToast(data.error || 'Import failed', 'error');
+            return;
+        }
+        // Build result message
+        const parts = [];
+        const s = data.sections || {};
+        if (s.messages) parts.push(`${s.messages.created} messages`);
+        if (s.jobs) parts.push(`${s.jobs.created} jobs`);
+        if (s.rules) parts.push(`${s.rules.created} rules`);
+        if (s.summaries) parts.push(`${s.summaries.created + (s.summaries.updated || 0)} summaries`);
+        const dupes = (s.messages?.duplicates || 0) + (s.jobs?.duplicates || 0) + (s.rules?.duplicates || 0);
+        let msg = 'Imported ' + parts.join(', ');
+        if (dupes > 0) msg += ` (${dupes} duplicates skipped)`;
+        if (data.warnings && data.warnings.length > 0) {
+            msg += `. ${data.warnings.length} warning(s)`;
+        }
+        showToast(msg, 'success');
+    } catch (e) {
+        showToast('Import failed: ' + e.message, 'error');
+    } finally {
+        btn.textContent = origText;
+        btn.disabled = false;
+    }
+}
+
 // --- Keyboard shortcuts ---
 
 function setupKeyboardShortcuts() {
@@ -2259,7 +2348,7 @@ function renderAttachments() {
         const wrap = document.createElement('div');
         wrap.className = 'attachment-preview';
         wrap.innerHTML = `
-            <img src="${att.url}" alt="${escapeHtml(att.name)}">
+            <img src="${att.url}" alt="${escapeHtml(att.name)}" onclick="openImageModal('${escapeHtml(att.url)}')" title="Click to preview">
             <button class="remove-btn" onclick="removeAttachment(${i})">x</button>
         `;
         container.appendChild(wrap);
@@ -2309,86 +2398,8 @@ function setupScroll() {
         new ResizeObserver(repositionScrollAnchor).observe(contentArea);
     }
 
-    // Collapse "Support development" to heart-only when the expanded pill would crowd tabs.
-    const supportLink = document.querySelector('.channel-support');
-    const supportLabel = document.querySelector('.support-label');
-    const channelBar = document.getElementById('channel-bar');
-    const channelBarRight = document.querySelector('.channel-bar-right');
-    const tabs = document.getElementById('channel-tabs');
-    const addBtn = document.getElementById('channel-add-btn');
-    if (supportLink && supportLabel && channelBar && channelBarRight && tabs) {
-        const COMFORT_MARGIN = 16;
-        const EXPAND_HYSTERESIS = 24;
-        let isCompact = supportLink.classList.contains('compact');
-
-        function applySupportCompact(compact) {
-            if (isCompact === compact) return false;
-            isCompact = compact;
-            supportLink.classList.toggle('compact', compact);
-            supportLabel.style.display = compact ? 'none' : '';
-            return true;
-        }
-
-        function measureRightWidth(compact) {
-            const prevCompact = supportLink.classList.contains('compact');
-            const prevDisplay = supportLabel.style.display;
-            supportLink.classList.toggle('compact', compact);
-            supportLabel.style.display = compact ? 'none' : '';
-            const width = Math.ceil(channelBarRight.getBoundingClientRect().width);
-            supportLink.classList.toggle('compact', prevCompact);
-            supportLabel.style.display = prevDisplay;
-            return width;
-        }
-
-        function getTabsContentWidth() {
-            const styles = getComputedStyle(tabs);
-            const gap = parseFloat(styles.columnGap || styles.gap || '0') || 0;
-            const children = Array.from(tabs.children);
-            let width = 0;
-            children.forEach((child, index) => {
-                width += child.getBoundingClientRect().width;
-                if (index < children.length - 1) width += gap;
-            });
-            return Math.ceil(width);
-        }
-
-        function checkSupportCollapse() {
-            const available = Math.ceil(channelBar.clientWidth);
-            const tabsWidth = getTabsContentWidth();
-            const addWidth = addBtn ? Math.ceil(addBtn.getBoundingClientRect().width + 8) : 0;
-            const expandedRightWidth = measureRightWidth(false);
-            const expandedNeeded = tabsWidth + addWidth + expandedRightWidth + COMFORT_MARGIN;
-
-            if (!isCompact && expandedNeeded > available) {
-                if (applySupportCompact(true)) requestAnimationFrame(checkSupportCollapse);
-                return;
-            }
-
-            if (isCompact && expandedNeeded + EXPAND_HYSTERESIS < available) {
-                if (applySupportCompact(false)) requestAnimationFrame(checkSupportCollapse);
-            }
-        }
-
-        const scheduleSupportRecheck = () => requestAnimationFrame(checkSupportCollapse);
-        window.addEventListener('resize', scheduleSupportRecheck);
-
-        const supportResizeObserver = new ResizeObserver(scheduleSupportRecheck);
-        supportResizeObserver.observe(channelBar);
-        supportResizeObserver.observe(tabs);
-        supportResizeObserver.observe(channelBarRight);
-
-        new MutationObserver(scheduleSupportRecheck).observe(tabs, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['class', 'style'],
-        });
-
-        requestAnimationFrame(() => {
-            checkSupportCollapse();
-            setTimeout(checkSupportCollapse, 0);
-        });
-    }
+    // Support button label collapses via CSS overflow (grid column shrinks naturally).
+    // No JS measurement needed.
 }
 
 // --- Reply ---
@@ -2945,7 +2956,11 @@ function openImageModal(url) {
     modalImages = getAllChatImages();
     // Match by endsWith since onclick passes relative URL but img.src is absolute
     modalIndex = modalImages.findIndex(src => src.endsWith(url) || src === url);
-    if (modalIndex === -1) modalIndex = 0;
+    if (modalIndex === -1) {
+        // Image not in chat gallery (e.g. composer preview) — show it standalone
+        modalImages = [url];
+        modalIndex = 0;
+    }
 
     let modal = document.getElementById('image-modal');
     if (!modal) {

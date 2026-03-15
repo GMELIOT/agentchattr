@@ -4,6 +4,7 @@ import json
 import os
 import time
 import threading
+import uuid
 from pathlib import Path
 
 
@@ -51,15 +52,21 @@ class MessageStore:
     def add(self, sender: str, text: str, msg_type: str = "chat",
             attachments: list | None = None, reply_to: int | None = None,
             channel: str = "general",
-            metadata: dict | None = None) -> dict:
+            metadata: dict | None = None,
+            uid: str | None = None,
+            timestamp: float | None = None,
+            time_str: str | None = None,
+            _bulk: bool = False) -> dict:
         with self._lock:
+            ts = timestamp if timestamp is not None else time.time()
             msg = {
                 "id": self._next_id,
+                "uid": uid or str(uuid.uuid4()),
                 "sender": sender,
                 "text": text,
                 "type": msg_type,
-                "timestamp": time.time(),
-                "time": time.strftime("%H:%M:%S"),
+                "timestamp": ts,
+                "time": time_str or time.strftime("%H:%M:%S"),
                 "attachments": attachments or [],
                 "channel": channel,
             }
@@ -69,19 +76,43 @@ class MessageStore:
                 msg["metadata"] = metadata
             self._next_id += 1
             self._messages.append(msg)
-            with open(self._path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+            if not _bulk:
+                with open(self._path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
 
-        # Fire callbacks outside the lock
-        for cb in self._callbacks:
-            try:
-                cb(msg)
-            except Exception:
-                pass
+        # Fire callbacks outside the lock (skip during bulk import)
+        if not _bulk:
+            for cb in self._callbacks:
+                try:
+                    cb(msg)
+                except Exception:
+                    pass
 
         return msg
+
+    def flush_bulk(self):
+        """Write all in-memory messages to disk. Call after bulk add operations."""
+        with self._lock:
+            self._rewrite()
+
+    def update_reply_to(self, msg_id: int, reply_to: int):
+        """Set reply_to on an existing message (used by import to rebuild links)."""
+        with self._lock:
+            for m in self._messages:
+                if m["id"] == msg_id:
+                    m["reply_to"] = reply_to
+                    self._rewrite()
+                    return
+
+    def _rewrite(self):
+        """Rewrite the full JSONL file from memory (used after bulk edits)."""
+        with open(self._path, "w", encoding="utf-8") as f:
+            for m in self._messages:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def get_by_id(self, msg_id: int) -> dict | None:
         with self._lock:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from store import MessageStore
@@ -1434,6 +1434,67 @@ async def upload_image(file: UploadFile = File(...)):
         "name": file.filename,
         "url": f"/uploads/{filename}",
     })
+
+
+# --- Export / Import ---
+
+@app.get("/api/export")
+async def export_history():
+    """Download a zip archive of project history."""
+    import archive as _archive
+    import time as _time
+    try:
+        zip_bytes = _archive.build_export(
+            store, jobs, rules, summaries,
+            app_version=config.get("server", {}).get("version", ""),
+        )
+    except Exception as exc:
+        return JSONResponse({"error": f"export failed: {exc}"}, status_code=500)
+    filename = f"agentchattr-export-{_time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/import")
+async def import_history(file: UploadFile = File(...)):
+    """Upload a zip archive and merge it into current stores."""
+    import archive as _archive
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        return JSONResponse({"error": "unsupported file type: expected .zip"}, status_code=400)
+    content = await file.read()
+    if len(content) > _archive.MAX_IMPORT_SIZE:
+        return JSONResponse(
+            {"error": f"file too large (max {_archive.MAX_IMPORT_SIZE // 1024 // 1024}MB)"},
+            status_code=400,
+        )
+    channel_list = list(room_settings.get("channels", ["general"]))
+    max_ch = room_settings.get("max_channels", 8)
+    report = _archive.import_archive(
+        content, store, jobs, rules, summaries,
+        channel_list, max_channels=max_ch,
+    )
+    if not report.get("ok"):
+        error = report.get("error", "import failed")
+        status = 409 if "already running" in error else 400
+        return JSONResponse({"error": error}, status_code=status)
+    # Update channel list if new channels were created
+    if report["channels"]["created"]:
+        room_settings["channels"] = channel_list
+        _save_settings()
+        await broadcast_settings()
+    # Tell all connected clients to reload (picks up imported messages)
+    data = json.dumps({"type": "reload"})
+    dead = set()
+    for client in list(ws_clients):
+        try:
+            await client.send_text(data)
+        except Exception:
+            dead.add(client)
+    ws_clients.difference_update(dead)
+    return JSONResponse(report)
 
 
 @app.get("/api/messages")

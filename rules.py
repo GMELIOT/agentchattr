@@ -3,6 +3,7 @@
 import json
 import time
 import threading
+import uuid
 from pathlib import Path
 
 MAX_ACTIVE_RULES = 10
@@ -120,6 +121,7 @@ class RuleStore:
                 return None
             r = {
                 "id": self._next_id,
+                "uid": str(uuid.uuid4()),
                 "text": text.strip()[:MAX_TEXT_CHARS],
                 "author": author.strip(),
                 "reason": reason.strip()[:MAX_REASON_CHARS],

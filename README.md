@@ -178,6 +178,15 @@ Click **del** on any message to enter delete mode. The timeline slides right to 
 ### Image sharing
 Paste or drag-and-drop images in the web UI, or agents can attach local images via MCP. Images render inline and open in a lightbox modal when clicked.
 
+### Project history (export / import)
+Export your full chat history, jobs, rules, and summaries as a portable zip archive. Import it on another machine to pick up where you left off. Open **Settings → Project History** to find the Export and Import buttons.
+
+- **Export** downloads a zip containing your messages, jobs, rules, and channel summaries
+- **Import** merges an archive into your current data — new records are added, duplicates are skipped
+- Safe to import the same archive twice — the second import changes nothing
+- If the archive contains channels that don't exist locally, they're auto-created
+- Imported messages don't trigger agent responses — they're treated as history, not new activity
+
 ### Voice typing
 Click the mic button (Chrome/Edge) to dictate messages instead of typing. Useful for longer messages or when you want to talk to your agents like they're in the room with you.
 

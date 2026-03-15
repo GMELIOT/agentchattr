@@ -1184,7 +1184,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                 channel=channel,
                                 metadata={"rule_id": rule["id"], "text": text, "status": "pending"},
                             )
-                            await broadcast(msg)
+                            # store.add() fires _on_store_message → broadcast already.
+                            # Do NOT call broadcast(msg) again here.
                 continue
 
             elif event.get("type") in ("decision_approve", "rule_activate"):

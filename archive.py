@@ -285,6 +285,7 @@ def _do_import(zip_bytes, store, jobs_store, rules_store,
 
     # --- Import jobs (Issue #3: preserve status, timestamps, job message identity) ---
     job_report = {"created": 0, "updated": 0, "messages_created": 0, "duplicates": 0, "conflicts": 0}
+    _job_id_remap = {}  # old numeric job_id → new local job_id
     if "jobs.json" in zf.namelist() and jobs_store:
         try:
             imported_jobs = json.loads(zf.read("jobs.json"))
@@ -333,8 +334,21 @@ def _do_import(zip_bytes, store, jobs_store, rules_store,
                             j["updated_at"] = job["updated_at"]
                             jobs_store._save()
                             break
+            # Track old→new ID mapping for breadcrumb remap
+            old_id = job.get("id")
+            if old_id is not None:
+                _job_id_remap[old_id] = new_job["id"]
             existing_job_uids.add(job_uid)
             job_report["created"] += 1
+        # Remap job_created breadcrumb messages to point at new job IDs
+        if _job_id_remap:
+            with store._lock:
+                for m in store._messages:
+                    if m.get("type") == "job_created" and isinstance(m.get("metadata"), dict):
+                        old_jid = m["metadata"].get("job_id")
+                        if old_jid in _job_id_remap:
+                            m["metadata"]["job_id"] = _job_id_remap[old_jid]
+                store._save()
     report["sections"]["jobs"] = job_report
 
     # --- Import rules ---

@@ -5,10 +5,11 @@ import re
 
 class Router:
     def __init__(self, agent_names: list[str], default_mention: str = "both",
-                 max_hops: int = 4):
+                 max_hops: int = 4, online_checker=None):
         self.agent_names = set(n.lower() for n in agent_names)
         self.default_mention = default_mention
         self.max_hops = max_hops
+        self._online_checker = online_checker  # callable() -> set of online agent names
         # Per-channel state: { channel: { hop_count, paused, guard_emitted } }
         self._channels: dict[str, dict] = {}
         self._build_pattern()
@@ -34,7 +35,12 @@ class Router:
         for match in self._mention_re.finditer(text):
             name = match.group(1).lower()
             if name in ("both", "all"):
-                mentions.update(self.agent_names)
+                # Only tag online agents when using @all
+                if self._online_checker:
+                    online = self._online_checker()
+                    mentions.update(n for n in self.agent_names if n in online)
+                else:
+                    mentions.update(self.agent_names)
             else:
                 mentions.add(name)
         return list(mentions)

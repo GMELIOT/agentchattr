@@ -285,6 +285,7 @@ def configure(cfg: dict, session_token: str = ""):
         agent_names=agent_names,
         default_mention=cfg.get("routing", {}).get("default", "none"),
         max_hops=max_hops,
+        online_checker=lambda: set(registry.get_active_names()) if registry else set(),
     )
     agents = AgentTrigger(registry, data_dir=data_dir)
 

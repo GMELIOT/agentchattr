@@ -382,9 +382,7 @@ def configure(cfg: dict, session_token: str = ""):
                                         "new_name": renamed["new"],
                                     })
                                     asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
-                            channels = room_settings.get("channels", ["general"])
-                            for ch in channels:
-                                store.add(name, f"{name} disconnected (timeout)", msg_type="leave", channel=ch)
+                            store.add(name, f"{name} disconnected (timeout)", msg_type="leave", channel=_last_active_channel)
                             _posted_leave.add(name)
 
                 # Re-fetch registered names (may have changed from crash timeout above)
@@ -406,9 +404,7 @@ def configure(cfg: dict, session_token: str = ""):
                     # Post leave message ONCE per offline transition (debounced)
                     if name not in _posted_leave:
                         _posted_leave.add(name)
-                        channels = room_settings.get("channels", ["general"])
-                        for ch in channels:
-                            store.add(name, f"{name} disconnected", msg_type="leave", channel=ch)
+                        store.add(name, f"{name} disconnected", msg_type="leave", channel=_last_active_channel)
 
                 # Clear leave debounce for agents that came back online
                 _posted_leave -= currently_online
@@ -425,9 +421,7 @@ def configure(cfg: dict, session_token: str = ""):
                         continue
                     if not registry.is_registered(name) and name not in _posted_leave:
                         _posted_leave.add(name)
-                        channels = room_settings.get("channels", ["general"])
-                        for ch in channels:
-                            store.add(name, f"{name} disconnected", msg_type="leave", channel=ch)
+                        store.add(name, f"{name} disconnected", msg_type="leave", channel=_last_active_channel)
 
                 if _known_online != currently_online and _event_loop:
                     asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
@@ -493,6 +487,7 @@ def configure(cfg: dict, session_token: str = ""):
 # --- Store → WebSocket bridge ---
 
 _event_loop = None  # set by run.py after starting the event loop
+_last_active_channel: str = "general"  # last channel any message was sent in
 
 
 def set_event_loop(loop):
@@ -650,6 +645,11 @@ async def _handle_new_message(msg: dict):
     msg_type = msg.get("type", "chat")
     sender = msg.get("sender", "")
     channel = msg.get("channel", "general")
+
+    # Track last active channel for leave/join messages (skip system messages)
+    global _last_active_channel
+    if msg_type not in ("system", "leave", "join"):
+        _last_active_channel = channel
     # Strip @mentions to find the slash command (e.g. "@claude @codex /hatmaking")
     stripped = _re.sub(r"@[\w-]+\s*", "", text).strip().lower()
     _broadcast_cmds = ("/hatmaking", "/artchallenge", "/roastreview", "/poetry")

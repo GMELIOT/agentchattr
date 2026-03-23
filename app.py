@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from store import MessageStore
@@ -45,6 +45,84 @@ ws_clients: set[WebSocket] = set()
 
 # --- Security: session token (set by configure()) ---
 session_token: str = ""
+
+# --- Login gate (set by configure()) ---
+login_sessions: set[str] = set()
+login_enabled: bool = False
+login_password_hash: str = ""
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Isaac — Sign in</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d0d12;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+  }
+  .card {
+    background: #16161e;
+    border: 1px solid #2a2a3a;
+    border-radius: 12px;
+    padding: 40px 36px;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; color: #f8fafc; }
+  p { font-size: 0.875rem; color: #94a3b8; margin-bottom: 28px; }
+  label { display: block; font-size: 0.8rem; font-weight: 500; color: #cbd5e1; margin-bottom: 6px; }
+  input[type=password] {
+    width: 100%;
+    background: #0d0d12;
+    border: 1px solid #2a2a3a;
+    border-radius: 8px;
+    color: #f8fafc;
+    font-size: 1rem;
+    padding: 10px 14px;
+    margin-bottom: 20px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type=password]:focus { border-color: #7c3aed; }
+  button {
+    width: 100%;
+    background: #7c3aed;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #6d28d9; }
+  .error { color: #f87171; font-size: 0.85rem; margin-top: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Isaac</h1>
+  <p>Enter the password to continue.</p>
+  <form method="post" action="/login">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" name="password" autofocus autocomplete="current-password" required>
+    <button type="submit">Sign in</button>
+    {error}
+  </form>
+</div>
+</body>
+</html>
+"""
 
 # Room settings (persisted to data/settings.json)
 room_settings: dict = {
@@ -230,9 +308,43 @@ def _install_security_middleware(token: str, cfg: dict):
     app.add_middleware(SecurityMiddleware)
 
 
+def _install_login_middleware():
+    """Gate the root page behind a password cookie when login is enabled."""
+    import hashlib
+
+    class LoginMiddleware(BaseHTTPMiddleware):
+        _OPEN = {"/login", "/logout"}
+
+        async def dispatch(self, request: Request, call_next):
+            import app as _self
+            if not _self.login_enabled:
+                return await call_next(request)
+
+            path = request.url.path
+            # Let static assets, API, and WS through — only gate the root page.
+            if (path != "/"
+                    or path in self._OPEN
+                    or path.startswith(("/static/", "/uploads/", "/api/", "/ws"))):
+                return await call_next(request)
+
+            cookie = request.cookies.get("isaac_session", "")
+            if cookie in _self.login_sessions:
+                return await call_next(request)
+
+            return RedirectResponse("/login", status_code=302)
+
+    app.add_middleware(LoginMiddleware)
+
+
 def configure(cfg: dict, session_token: str = ""):
     global store, rules, summaries, jobs, schedules, router, agents, registry, session_store, session_engine, config
+    global login_enabled, login_password_hash
     config = cfg
+    # --- Login gate ---
+    auth_cfg = cfg.get("auth", {})
+    login_enabled = bool(auth_cfg.get("enabled", False))
+    login_password_hash = auth_cfg.get("password_hash", "")
+    _install_login_middleware()
     # --- Security: store the session token and install middleware ---
     _install_security_middleware(session_token, cfg)
 
@@ -2599,6 +2711,47 @@ async def version_check():
         "state": state,
         "url": release.get("url", ""),
     })
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    import app as _self
+    if not _self.login_enabled:
+        return RedirectResponse("/", status_code=302)
+    return Response(LOGIN_HTML.replace("{error}", ""), media_type="text/html")
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    import hashlib
+    import app as _self
+    if not _self.login_enabled:
+        return RedirectResponse("/", status_code=302)
+    form = await request.form()
+    password = form.get("password", "")
+    digest = hashlib.sha256(password.encode()).hexdigest()
+    if digest != _self.login_password_hash:
+        error_html = '<p class="error">Incorrect password.</p>'
+        return Response(LOGIN_HTML.replace("{error}", error_html), media_type="text/html", status_code=401)
+    sid = uuid.uuid4().hex
+    _self.login_sessions.add(sid)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(
+        "isaac_session", sid,
+        httponly=True, secure=True, samesite="strict",
+        max_age=30 * 24 * 3600,
+    )
+    return resp
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    import app as _self
+    sid = request.cookies.get("isaac_session", "")
+    _self.login_sessions.discard(sid)
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie("isaac_session")
+    return resp
 
 
 @app.get("/uploads/{filename}")

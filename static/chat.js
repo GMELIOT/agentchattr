@@ -5,6 +5,7 @@
 const SESSION_TOKEN = window.__SESSION_TOKEN__ || "";
 
 let ws = null;
+let sendQueue = [];  // payloads queued while WS is not open
 let pendingAttachments = [];
 let autoScroll = true;
 let reconnectTimer = null;
@@ -231,6 +232,13 @@ function init() {
         gfm: true,         // GitHub-flavored markdown
     });
 
+    // Restore any messages queued before a server-restart reload
+    const savedUnsent = sessionStorage.getItem('agentchattr_unsent');
+    if (savedUnsent) {
+        try { sendQueue = JSON.parse(savedUnsent); } catch (_) {}
+        sessionStorage.removeItem('agentchattr_unsent');
+    }
+
     detectPlatform();
     fetchRoles();
     connectWebSocket();
@@ -374,6 +382,10 @@ function connectWebSocket() {
         if (reconnectTimer) {
             clearTimeout(reconnectTimer);
             reconnectTimer = null;
+        }
+        // Flush any messages queued while the connection was down
+        while (sendQueue.length > 0) {
+            ws.send(JSON.stringify(sendQueue.shift()));
         }
     };
 
@@ -597,6 +609,11 @@ function connectWebSocket() {
         // Auto-reload to pick up the fresh token from the new HTML page.
         if (e.code === 4003) {
             console.warn('Session token rejected (server restarted?) — reloading page...');
+            // Preserve any unsent messages across the reload
+            const currentInput = document.getElementById('input')?.value?.trim();
+            const unsent = [...sendQueue];
+            if (currentInput) unsent.push({ type: 'message', text: currentInput, sender: username, channel: activeChannel, attachments: [] });
+            if (unsent.length > 0) sessionStorage.setItem('agentchattr_unsent', JSON.stringify(unsent));
             location.reload();
             return;
         }
@@ -2294,6 +2311,9 @@ function sendMessage() {
 
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(payload));
+    } else {
+        // WS not ready — queue and send when connection opens
+        sendQueue.push(payload);
     }
 
     input.value = '';

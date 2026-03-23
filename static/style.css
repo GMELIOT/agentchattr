@@ -4228,9 +4228,6 @@ footer {
 
 /* --- Mobile Responsiveness --- */
 
-
-/* --- Mobile Responsiveness --- */
-
 @media (max-width: 768px) {
     #app {
         height: 100dvh;

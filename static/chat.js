@@ -787,6 +787,12 @@ function appendMessage(msg) {
                     <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
                 </div>
                 <div class="permission-action">${actionText}</div>
+                ${meta.raw_block ? `
+                    <details class="permission-context">
+                        <summary>Context</summary>
+                        <pre class="permission-raw-block">${escapeHtml(meta.raw_block)}</pre>
+                    </details>
+                ` : ''}
                 ${isPending ? `
                     <div class="permission-actions">
                         ${options.map((opt, index) => {

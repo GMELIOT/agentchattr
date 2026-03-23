@@ -4449,3 +4449,29 @@ footer {
     color: var(--text);
     border-color: var(--text-dim);
 }
+.permission-context {
+    margin: 8px 0;
+}
+.permission-context summary {
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+    user-select: none;
+}
+.permission-context summary:hover {
+    color: var(--text);
+}
+.permission-raw-block {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-dim);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+}

@@ -135,6 +135,8 @@ def detect_permission_prompt(pane_content: str) -> dict | None:
     if not pane_content.strip():
         return None
 
+    all_lines = pane_content.split("\n")
+
     for pattern, agent_hint in PERMISSION_PATTERNS:
         match = re.search(pattern, pane_content)
         if not match:
@@ -149,8 +151,12 @@ def detect_permission_prompt(pane_content: str) -> dict | None:
 
         for line in lines[1:]:
             stripped = line.strip()
+            # Strip box-drawing characters (│ ╭ ╰ etc.) used by Gemini CLI
+            stripped = re.sub(r"^[│╭╰╮╯┃┌└┐┘]+\s*", "", stripped)
+            stripped = re.sub(r"\s*[│╭╰╮╯┃┌└┐┘]+$", "", stripped)
+            stripped = stripped.strip()
             # Match numbered options: "1. Yes" or "> 1. Yes" or "● 1. Allow once"
-            opt_match = re.match(r"[>●]?\s*(\d+)\.\s+(.+)", stripped)
+            opt_match = re.match(r"[>●❯]?\s*(\d+)\.\s+(.+)", stripped)
             if opt_match:
                 options.append({
                     "key": opt_match.group(1),
@@ -162,7 +168,7 @@ def detect_permission_prompt(pane_content: str) -> dict | None:
                 if key_match:
                     key = key_match.group(1).lower()
                     label = re.sub(r"\s*\([yYaA]\)\s*$", "", stripped)
-                    label = re.sub(r"^[>●]?\s*\d+\.\s*", "", label)
+                    label = re.sub(r"^[>●❯]?\s*\d+\.\s*", "", label)
                     options.append({"key": key, "label": label.strip()})
             elif stripped == "" and options:
                 # Blank line after options = end of option block
@@ -171,11 +177,44 @@ def detect_permission_prompt(pane_content: str) -> dict | None:
         if not options:
             continue
 
+        # For Claude Code, enrich the action with the tool description
+        # that appears above the prompt (e.g. "Bash command\n\n  tmux send-keys...")
+        if agent_hint == "claude":
+            # Find the match line in all_lines to grab context above
+            match_line_idx = None
+            for i, l in enumerate(all_lines):
+                if re.search(pattern, l):
+                    match_line_idx = i
+                    break
+            if match_line_idx is not None:
+                # Grab up to 15 lines before the prompt for context
+                context_start = max(0, match_line_idx - 15)
+                context_lines = all_lines[context_start:match_line_idx]
+                # Look for tool header (e.g. "Bash command", "Edit file", "Write file")
+                tool_desc_parts = []
+                for cl in context_lines:
+                    stripped_cl = cl.strip()
+                    # Skip empty lines and separator lines
+                    if not stripped_cl or stripped_cl.startswith("───"):
+                        continue
+                    tool_desc_parts.append(stripped_cl)
+                if tool_desc_parts:
+                    action = action + "\n\n" + "\n".join(tool_desc_parts[-8:])
+
+        # Build raw_block: include context above the prompt + the prompt itself
+        match_line_idx_global = None
+        for i, l in enumerate(all_lines):
+            if re.search(pattern, l):
+                match_line_idx_global = i
+                break
+        context_start = max(0, (match_line_idx_global or 0) - 10)
+        raw_lines = all_lines[context_start:context_start + 30]
+
         return {
             "action": action,
             "agent_hint": agent_hint,
             "options": options,
-            "raw_block": "\n".join(lines[:20]),  # cap at 20 lines
+            "raw_block": "\n".join(raw_lines),
         }
 
     return None

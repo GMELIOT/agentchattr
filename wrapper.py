@@ -586,6 +586,8 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
             last_prompt_hash = prompt_hash
             current_name, _ = get_identity_fn()
             _token = get_token_fn() if get_token_fn else ""
+            print(f"  [permission] Detected prompt for {current_name}: {prompt['action'][:60]}")
+            print(f"  [permission] Options: {[o['label'] for o in prompt['options']]}")
 
             # POST to server
             payload = json.dumps({
@@ -658,8 +660,8 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
             # Reset so we can detect new prompts
             last_prompt_hash = None
 
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"  [permission] Error: {exc}")
 
         time.sleep(poll_interval)
 

@@ -9,6 +9,8 @@ let sendQueue = [];  // payloads queued while WS is not open
 let pendingAttachments = [];
 let autoScroll = true;
 let reconnectTimer = null;
+let pingInterval = null;
+let pongTimeout = null;
 let username = 'user';
 let agentConfig = {};  // { name: { color, label } } — registered instances (used for pills)
 let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
@@ -387,10 +389,24 @@ function connectWebSocket() {
         while (sendQueue.length > 0) {
             ws.send(JSON.stringify(sendQueue.shift()));
         }
+        // Start ping/pong keepalive to detect half-open connections
+        if (pingInterval) clearInterval(pingInterval);
+        pingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping' }));
+                pongTimeout = setTimeout(() => {
+                    console.warn('Pong timeout — connection dead, forcing reconnect');
+                    ws.close();
+                }, 5000);
+            }
+        }, 30000);
     };
 
     ws.onmessage = (e) => {
         const event = JSON.parse(e.data);
+        // Clear pong timeout on any server message (proves connection is alive)
+        if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
+        if (event.type === 'pong') return;
         // Emit through Hub for modules to subscribe (PR 1 seam)
         Hub.emit(event.type, event);
         if (event.type === 'message_update') {
@@ -605,6 +621,9 @@ function connectWebSocket() {
     };
 
     ws.onclose = (e) => {
+        // Stop keepalive
+        if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+        if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
         // Server sends 4003 when session token is invalid (server restarted).
         // Auto-reload to pick up the fresh token from the new HTML page.
         if (e.code === 4003) {

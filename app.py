@@ -1199,6 +1199,10 @@ async def websocket_endpoint(websocket: WebSocket):
             raw = await websocket.receive_text()
             event = json.loads(raw)
 
+            if event.get("type") == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+                continue
+
             if event.get("type") == "message":
                 text = event.get("text", "").strip()
                 attachments = event.get("attachments", [])

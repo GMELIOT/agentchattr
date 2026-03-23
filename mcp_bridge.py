@@ -892,20 +892,21 @@ _ALL_TOOLS = [
 ]
 
 
-def _create_server(port: int) -> FastMCP:
+def _create_server(port: int, stateless: bool = False) -> FastMCP:
     server = FastMCP(
         "agentchattr",
         host="127.0.0.1",
         port=port,
         log_level="ERROR",
         instructions=_MCP_INSTRUCTIONS,
+        stateless_http=stateless,
     )
     for func in _ALL_TOOLS:
         server.tool()(func)
     return server
 
 
-mcp_http = _create_server(8200)  # streamable-http for Claude/Codex/Qwen
+mcp_http = _create_server(8200, stateless=True)  # streamable-http for Claude/Codex/Qwen
 mcp_sse = _create_server(8201)   # SSE for Gemini
 
 # Keep backward compat — run.py references mcp_bridge.store
@@ -913,53 +914,8 @@ mcp_sse = _create_server(8201)   # SSE for Gemini
 
 
 def run_http_server():
-    """Block — run streamable-http MCP with auto-session-recovery.
-
-    Wraps the Starlette app with middleware that strips stale Mcp-Session-Id
-    headers.  When a client reconnects after a server restart with an expired
-    session ID, the SDK would normally return "Session not found".  By stripping
-    the header, the request is treated as a new-session request and the client
-    transparently gets a fresh session.
-    """
-    import asyncio
-    import uvicorn
-    from starlette.types import ASGIApp, Receive, Scope, Send
-
-    # Build the standard Starlette app (creates the session manager lazily)
-    starlette_app = mcp_http.streamable_http_app()
-    session_mgr = mcp_http._session_manager
-
-    MCP_SESSION_HEADER = b"mcp-session-id"
-
-    class _SessionRecoveryMiddleware:
-        """ASGI middleware that strips unrecognised Mcp-Session-Id headers."""
-
-        def __init__(self, app: ASGIApp):
-            self.app = app
-
-        async def __call__(self, scope: Scope, receive: Receive, send: Send):
-            if scope["type"] == "http" and session_mgr is not None:
-                headers = dict(scope.get("headers", []))
-                sid = headers.get(MCP_SESSION_HEADER, b"").decode()
-                if sid and sid not in session_mgr._server_instances:
-                    log.info("Stripping stale MCP session %s — will create new session", sid[:12])
-                    scope = dict(scope)
-                    scope["headers"] = [
-                        (k, v) for k, v in scope["headers"]
-                        if k != MCP_SESSION_HEADER
-                    ]
-            await self.app(scope, receive, send)
-
-    wrapped = _SessionRecoveryMiddleware(starlette_app)
-
-    config = uvicorn.Config(
-        wrapped,
-        host=mcp_http.settings.host,
-        port=mcp_http.settings.port,
-        log_level=mcp_http.settings.log_level.lower(),
-    )
-    server = uvicorn.Server(config)
-    asyncio.run(server.serve())
+    """Block — run streamable-http MCP in a background thread."""
+    mcp_http.run(transport="streamable-http")
 
 
 def run_sse_server():

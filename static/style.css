@@ -4391,3 +4391,61 @@ footer {
         justify-content: center;
     }
 }
+
+/* Permission Cards */
+.permission-card {
+    max-width: 690px;
+    width: 100%;
+    background: rgba(245, 158, 11, 0.06);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: var(--radius-lg);
+    padding: 12px 16px;
+}
+.permission-pill {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(245, 158, 11, 0.15);
+    color: #d97706;
+}
+.permission-action {
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.4;
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+.permission-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+.permission-btn {
+    padding: 5px 16px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.permission-approve {
+    background: #d97706;
+    color: white;
+    border: 1px solid #d97706;
+}
+.permission-approve:hover {
+    background: #b45309;
+    border-color: #b45309;
+}
+.permission-deny {
+    background: none;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+}
+.permission-deny:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+}

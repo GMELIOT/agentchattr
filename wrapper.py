@@ -537,6 +537,134 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
 
 
 # ---------------------------------------------------------------------------
+# Permission interceptor
+# ---------------------------------------------------------------------------
+
+def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
+                        get_token_fn=None, session_name: str = "",
+                        poll_interval: float = 2.0):
+    """Detect permission prompts in tmux pane and relay to server for UI approval.
+
+    Flow:
+      1. Periodically capture tmux pane content
+      2. Detect permission prompts using wrapper_unix patterns
+      3. POST to server /api/permissions
+      4. Poll /api/permissions/{id} for user response
+      5. Inject keystroke back into tmux session
+    """
+    import urllib.request
+    import urllib.error
+
+    from wrapper_unix import capture_pane, detect_permission_prompt, inject_keystroke
+
+    last_prompt_hash = None  # Avoid re-sending the same prompt
+
+    while True:
+        try:
+            if not session_name:
+                time.sleep(poll_interval)
+                continue
+
+            pane_content = capture_pane(session_name)
+            if not pane_content:
+                last_prompt_hash = None
+                time.sleep(poll_interval)
+                continue
+
+            prompt = detect_permission_prompt(pane_content)
+            if not prompt:
+                last_prompt_hash = None
+                time.sleep(poll_interval)
+                continue
+
+            # Deduplicate: don't re-send the same prompt
+            prompt_hash = hash(prompt["action"] + str(prompt["options"]))
+            if prompt_hash == last_prompt_hash:
+                time.sleep(poll_interval)
+                continue
+
+            last_prompt_hash = prompt_hash
+            current_name, _ = get_identity_fn()
+            _token = get_token_fn() if get_token_fn else ""
+
+            # POST to server
+            payload = json.dumps({
+                "agent": current_name,
+                "action": prompt["action"],
+                "options": prompt["options"],
+                "raw_block": prompt.get("raw_block", ""),
+            }).encode()
+
+            headers = {"Content-Type": "application/json"}
+            if _token:
+                headers["Authorization"] = f"Bearer {_token}"
+
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server_port}/api/permissions",
+                method="POST",
+                data=payload,
+                headers=headers,
+            )
+
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp_data = json.loads(resp.read())
+
+            perm_id = resp_data.get("id")
+            if not perm_id:
+                time.sleep(poll_interval)
+                continue
+
+            # Poll for response
+            poll_start = time.time()
+            timeout_secs = 300  # 5 minute timeout
+            while time.time() - poll_start < timeout_secs:
+                time.sleep(1)
+
+                try:
+                    poll_headers = {}
+                    if _token:
+                        poll_headers["Authorization"] = f"Bearer {_token}"
+                    poll_req = urllib.request.Request(
+                        f"http://127.0.0.1:{server_port}/api/permissions/{perm_id}",
+                        headers=poll_headers,
+                    )
+                    with urllib.request.urlopen(poll_req, timeout=5) as poll_resp:
+                        poll_data = json.loads(poll_resp.read())
+
+                    status = poll_data.get("status")
+                    if status == "approved":
+                        key = poll_data.get("key", "")
+                        if key:
+                            inject_keystroke(session_name, key)
+                            print(f"  [permission] Approved: {prompt['action'][:60]} → key '{key}'")
+                        break
+                    elif status == "denied":
+                        # Send Escape or the deny key
+                        deny_key = poll_data.get("key", "Escape")
+                        inject_keystroke(session_name, deny_key)
+                        print(f"  [permission] Denied: {prompt['action'][:60]}")
+                        break
+                    elif status == "expired":
+                        print(f"  [permission] Expired: {prompt['action'][:60]}")
+                        break
+                    # else: still pending, keep polling
+                except urllib.error.HTTPError as exc:
+                    if exc.code == 404:
+                        break  # permission was cleaned up
+                    time.sleep(2)
+                except Exception:
+                    time.sleep(2)
+
+            # Reset so we can detect new prompts
+            last_prompt_hash = None
+
+        except Exception:
+            pass
+
+        time.sleep(poll_interval)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -841,6 +969,19 @@ def main():
 
         unix_session_name = f"agentchattr-{assigned_name}"
         _set_activity_checker(get_activity_checker(unix_session_name, trigger_flag=_trigger_flag))
+
+        # Start permission interceptor thread (unix only — needs tmux)
+        threading.Thread(
+            target=_permission_watcher,
+            kwargs={
+                "get_identity_fn": get_identity,
+                "server_port": server_port,
+                "get_token_fn": get_token,
+                "session_name": unix_session_name,
+            },
+            daemon=True,
+        ).start()
+        print(f"  Permission interceptor active for {unix_session_name}")
 
     run_kwargs = dict(
         command=command,

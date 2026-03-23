@@ -11,6 +11,7 @@ How it works:
   4. Ctrl+B, D to detach (agent keeps running in background)
 """
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -77,6 +78,124 @@ def get_activity_checker(session_name, trigger_flag=None):
             return False
 
     return check
+
+
+# ---------------------------------------------------------------------------
+# Permission prompt detection
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate a CLI is waiting for user approval.
+# Each entry: (regex_pattern, agent_hint, option_extractor)
+PERMISSION_PATTERNS = [
+    # Claude Code: "Do you want to ..." with numbered options
+    (r"Do you want to (.+\?)", "claude"),
+    # Codex: "Would you like to make the following edits?"
+    (r"Would you like to make the following edits\?", "codex"),
+    # Gemini: "Action Required" followed by "Apply this change?"
+    (r"Action Required", "gemini"),
+]
+
+# Map of key labels to the actual keystroke to send
+KEYSTROKE_MAP = {
+    # Claude Code
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    # Codex uses y/a/Escape
+    "y": "y",
+    "a": "a",
+    # Gemini uses numbers
+}
+
+
+def capture_pane(session_name: str) -> str:
+    """Capture the current tmux pane content."""
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_name, "-p"],
+            capture_output=True, text=True, timeout=2,
+        )
+        return result.stdout if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def detect_permission_prompt(pane_content: str) -> dict | None:
+    """Scan pane content for a permission prompt.
+
+    Returns a dict with prompt details if found, None otherwise:
+        {
+            "action": "Do you want to create test-permission.txt?",
+            "agent_hint": "claude",
+            "options": [{"key": "1", "label": "Yes"}, ...],
+            "raw_block": "<full prompt text>"
+        }
+    """
+    if not pane_content.strip():
+        return None
+
+    for pattern, agent_hint in PERMISSION_PATTERNS:
+        match = re.search(pattern, pane_content)
+        if not match:
+            continue
+
+        # Extract the prompt block starting from the match
+        block_start = pane_content[match.start():]
+        lines = block_start.split("\n")
+
+        action = lines[0].strip()
+        options = []
+
+        for line in lines[1:]:
+            stripped = line.strip()
+            # Match numbered options: "1. Yes" or "> 1. Yes" or "● 1. Allow once"
+            opt_match = re.match(r"[>●]?\s*(\d+)\.\s+(.+)", stripped)
+            if opt_match:
+                options.append({
+                    "key": opt_match.group(1),
+                    "label": opt_match.group(2).strip(),
+                })
+            # Codex uses (y) (a) (esc) format
+            elif re.match(r".*\(([yYaA])\)\s*$", stripped):
+                key_match = re.search(r"\(([yYaA])\)", stripped)
+                if key_match:
+                    key = key_match.group(1).lower()
+                    label = re.sub(r"\s*\([yYaA]\)\s*$", "", stripped)
+                    label = re.sub(r"^[>●]?\s*\d+\.\s*", "", label)
+                    options.append({"key": key, "label": label.strip()})
+            elif stripped == "" and options:
+                # Blank line after options = end of option block
+                break
+
+        if not options:
+            continue
+
+        return {
+            "action": action,
+            "agent_hint": agent_hint,
+            "options": options,
+            "raw_block": "\n".join(lines[:20]),  # cap at 20 lines
+        }
+
+    return None
+
+
+def inject_keystroke(session_name: str, key: str):
+    """Send a single keystroke to the tmux session to respond to a permission prompt."""
+    # For Escape key
+    if key.lower() in ("esc", "escape"):
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Escape"],
+            capture_output=True,
+        )
+        return
+
+    # For regular keys (1, 2, 3, y, a, etc.)
+    subprocess.run(
+        ["tmux", "send-keys", "-t", session_name, key],
+        capture_output=True,
+    )
 
 
 def run_agent(

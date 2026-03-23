@@ -255,6 +255,7 @@ function init() {
     Sessions.init();
     Channels.init();
     checkForUpdate();
+    fetchPendingPermissions();
 
     // Dismiss channel edit controls when clicking outside channel bar
     document.addEventListener('click', (e) => {
@@ -501,6 +502,32 @@ function connectWebSocket() {
                 todos[d.id] = d.status;
             }
             updateTodoState(d.id, d.status);
+        } else if (event.type === 'permission') {
+            const d = event.data;
+            if (event.action === 'request') {
+                appendMessage({
+                    id: d.id,
+                    type: 'permission',
+                    sender: d.agent,
+                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    metadata: d,
+                    channel: activeChannel
+                });
+            } else if (event.action === 'response' || event.action === 'expired') {
+                const el = document.querySelector(`.message[data-id="${d.id}"]`);
+                if (el) {
+                    const card = el.querySelector('.permission-card');
+                    if (card) {
+                        card.classList.add('proposal-resolved');
+                        const actions = card.querySelector('.permission-actions');
+                        if (actions) {
+                            const status = event.action === 'expired' ? 'Expired' : (d.status === 'approved' ? '✓ Approved' : '✗ Denied');
+                            const label = d.chosen_label ? ` (${d.chosen_label})` : '';
+                            actions.outerHTML = `<div class="proposal-status-resolved">${status}${label}</div>`;
+                        }
+                    }
+                }
+            }
         } else if (event.type === 'status') {
             updateStatus(event.data);
             // Status is the last event sent on connect — enable sounds after history
@@ -745,6 +772,34 @@ function appendMessage(msg) {
                 `}
             </div>
             ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
+    } else if (msg.type === 'permission') {
+        el.classList.add('proposal-msg');
+        const meta = msg.metadata || {};
+        const actionText = escapeHtml(meta.action || '');
+        const options = meta.options || [];
+        const status = meta.status || 'pending';
+        const isPending = status === 'pending';
+        const color = getColor(msg.sender);
+        el.innerHTML = `
+            <div class="permission-card ${isPending ? '' : 'proposal-resolved'}">
+                <div class="proposal-header">
+                    <span class="permission-pill">Permission Request</span>
+                    <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
+                </div>
+                <div class="permission-action">${actionText}</div>
+                ${isPending ? `
+                    <div class="permission-actions">
+                        ${options.map((opt, index) => {
+                            const isLast = index === options.length - 1;
+                            const action = isLast ? 'deny' : 'approve';
+                            return `<button class="permission-btn ${isLast ? 'permission-deny' : 'permission-approve'}"
+                                            onclick="respondToPermission('${meta.id}', '${opt.key}', '${action}')">${escapeHtml(opt.label)}</button>`;
+                        }).join('')}
+                    </div>
+                ` : `
+                    <div class="proposal-status-resolved">${status === 'approved' ? '✓ Approved' : '✗ Denied'} (${escapeHtml(meta.chosen_label || '')})</div>
+                `}
+            </div>`;
     } else if (msg.type === 'rule_proposal') {
         el.classList.add('proposal-msg');
         const meta = msg.metadata || {};
@@ -4141,3 +4196,45 @@ function initHelpTour() {
 // --- Start ---
 
 document.addEventListener('DOMContentLoaded', function() { init(); initHelpTour(); });
+
+async function fetchPendingPermissions() {
+    try {
+        const res = await fetch('/api/permissions', {
+            headers: { 'X-Session-Token': SESSION_TOKEN }
+        });
+        if (!res.ok) return;
+        const permissions = await res.json();
+        permissions.forEach(p => {
+            if (document.querySelector(`.message[data-id="${p.id}"]`)) return;
+            appendMessage({
+                id: p.id,
+                type: 'permission',
+                sender: p.agent,
+                time: '',
+                metadata: p,
+                channel: activeChannel
+            });
+        });
+    } catch (err) {
+        console.error('Failed to fetch pending permissions:', err);
+    }
+}
+
+async function respondToPermission(id, key, action) {
+    try {
+        const res = await fetch(`/api/permissions/${id}/respond`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-Session-Token': SESSION_TOKEN
+            },
+            body: JSON.stringify({ key, action })
+        });
+        if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+        console.error('Failed to respond to permission:', err);
+        alert('Failed to send response: ' + err.message);
+    }
+}
+
+window.respondToPermission = respondToPermission;

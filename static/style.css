@@ -4278,11 +4278,42 @@ footer {
         justify-content: center;
     }
 
-    /* Message bubbles */
+    /* Tighter message row — avatar shifts left, bubble gets more room */
+    .message {
+        padding: 2px 4px;
+        gap: 4px;
+    }
+
+    .avatar-wrap, .avatar {
+        width: 24px;
+        height: 24px;
+    }
+
+    .avatar svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    /* Bubble fills remaining flex space */
     .chat-bubble {
-        max-width: 92%;
+        flex: 1;
+        max-width: calc(100% - 32px);
         min-width: 0 !important;
-        padding: 8px 12px;
+        padding: 8px 10px;
+    }
+
+    /* Copy button: smaller on mobile, always slightly visible */
+    .bubble-copy {
+        min-width: 24px !important;
+        min-height: 24px !important;
+        opacity: 0.4;
+        top: 4px;
+        right: 4px;
+    }
+
+    /* Hide msg-actions on mobile — no hover events, copy button covers main action */
+    .msg-actions {
+        display: none;
     }
 
     /* Input area */

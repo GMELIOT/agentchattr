@@ -43,6 +43,9 @@ session_engine: SessionEngine | None = None
 config: dict = {}
 ws_clients: set[WebSocket] = set()
 
+# --- Permission interceptor: pending approvals ---
+pending_permissions: dict[str, dict] = {}  # uuid -> {agent, action, options, status, key, created_at}
+
 # --- Security: session token (set by configure()) ---
 session_token: str = ""
 
@@ -288,7 +291,7 @@ def _install_security_middleware(token: str, cfg: dict):
             # Allow registered agents to authenticate via Bearer token
             # for /api/messages and /api/send (no browser session needed).
             auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer ") and (path in ("/api/messages", "/api/send") or path.startswith("/api/rules/")):
+            if auth_header.lower().startswith("bearer ") and (path in ("/api/messages", "/api/send") or path.startswith("/api/rules/") or path.startswith("/api/permissions")):
                 bearer = auth_header[7:].strip()
                 if _self.registry and _self.registry.resolve_token(bearer):
                     return await call_next(request)
@@ -1101,6 +1104,18 @@ async def broadcast_agents():
     for client in list(ws_clients):
         try:
             await client.send_text(data)
+        except Exception:
+            dead.add(client)
+    ws_clients.difference_update(dead)
+
+
+async def broadcast_permission(action: str, data: dict):
+    """Broadcast permission request/response to all WebSocket clients."""
+    payload = json.dumps({"type": "permission", "action": action, "data": data})
+    dead = set()
+    for client in list(ws_clients):
+        try:
+            await client.send_text(payload)
         except Exception:
             dead.add(client)
     ws_clients.difference_update(dead)
@@ -2143,6 +2158,97 @@ async def set_agent_role(agent_name: str, request: Request):
     mcp_bridge.set_role(agent_name, role)
     await broadcast_status()
     return JSONResponse({"ok": True, "role": role})
+
+
+# --- Permission Interceptor API ---
+
+@app.post("/api/permissions")
+async def create_permission(request: Request):
+    """Wrapper posts a detected permission prompt. Server stores it and broadcasts to UI."""
+    body = await request.json()
+    agent = body.get("agent", "").strip()
+    action = body.get("action", "").strip()
+    options = body.get("options", [])
+    raw_block = body.get("raw_block", "")
+
+    if not agent or not action:
+        return JSONResponse({"error": "agent and action required"}, status_code=400)
+
+    import time as _time
+    perm_id = str(uuid.uuid4())[:8]
+    perm = {
+        "id": perm_id,
+        "agent": agent,
+        "action": action,
+        "options": options,
+        "raw_block": raw_block,
+        "status": "pending",
+        "key": "",
+        "created_at": _time.time(),
+    }
+    pending_permissions[perm_id] = perm
+
+    # Broadcast to all connected UIs
+    await broadcast_permission("request", perm)
+
+    log.info("Permission request %s from %s: %s", perm_id, agent, action[:80])
+    return {"id": perm_id, "status": "pending"}
+
+
+@app.get("/api/permissions/{perm_id}")
+async def get_permission(perm_id: str):
+    """Wrapper polls this to check if the user responded."""
+    perm = pending_permissions.get(perm_id)
+    if not perm:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    # Auto-expire after 5 minutes
+    import time as _time
+    if _time.time() - perm["created_at"] > 300 and perm["status"] == "pending":
+        perm["status"] = "expired"
+        await broadcast_permission("expired", perm)
+
+    return perm
+
+
+@app.post("/api/permissions/{perm_id}/respond")
+async def respond_permission(perm_id: str, request: Request):
+    """UI posts the user's approval/denial."""
+    perm = pending_permissions.get(perm_id)
+    if not perm:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if perm["status"] != "pending":
+        return JSONResponse({"error": f"already {perm['status']}"}, status_code=409)
+
+    body = await request.json()
+    key = body.get("key", "").strip()
+    action = body.get("action", "approve")  # "approve" or "deny"
+
+    if not key:
+        return JSONResponse({"error": "key required"}, status_code=400)
+
+    perm["status"] = "approved" if action == "approve" else "denied"
+    perm["key"] = key
+
+    await broadcast_permission("response", perm)
+
+    log.info("Permission %s %s: key=%s", perm_id, perm["status"], key)
+    return {"ok": True, "status": perm["status"]}
+
+
+@app.get("/api/permissions")
+async def list_permissions():
+    """List all pending permissions (for UI to render on page load)."""
+    import time as _time
+    # Clean up expired
+    expired = [pid for pid, p in pending_permissions.items()
+               if _time.time() - p["created_at"] > 300 and p["status"] == "pending"]
+    for pid in expired:
+        pending_permissions[pid]["status"] = "expired"
+
+    # Return pending only
+    pending = [p for p in pending_permissions.values() if p["status"] == "pending"]
+    return pending
 
 
 # --- Rules API ---

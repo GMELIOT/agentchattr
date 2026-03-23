@@ -48,7 +48,7 @@ session_token: str = ""
 
 # Room settings (persisted to data/settings.json)
 room_settings: dict = {
-    "title": "agentchattr",
+    "title": "Isaac",
     "username": "user",
     "font": "sans",
     "channels": ["general"],
@@ -172,10 +172,11 @@ def _install_security_middleware(token: str, cfg: dict):
     import app as _self
     _self.session_token = token
     port = cfg.get("server", {}).get("port", 8300)
+    extra_origins = set(cfg.get("server", {}).get("allowed_origins", []))
     allowed_origins = {
         f"http://127.0.0.1:{port}",
         f"http://localhost:{port}",
-    }
+    } | extra_origins
 
     class SecurityMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):

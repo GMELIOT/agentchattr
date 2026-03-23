@@ -42,7 +42,9 @@ class RuntimeRegistry:
         self._renames: dict[str, str] = {}           # old name → new name (for heartbeat redirect)
         self._on_change_cbs: list = []
         self._data_dir = Path(data_dir)
+        self._saved_tokens: dict[str, str] = {}    # base → token (persisted across restarts)
         self._load_renames()
+        self._load_tokens()
 
     # --- Setup ---
 
@@ -85,6 +87,29 @@ class RuntimeRegistry:
                 data = dict(self._renames)
             tmp.write_text(json.dumps(data), "utf-8")
             tmp.replace(self._renames_path())
+        except Exception:
+            pass
+
+    def _tokens_path(self) -> Path:
+        return self._data_dir / "agent_tokens.json"
+
+    def _load_tokens(self):
+        p = self._tokens_path()
+        if p.exists():
+            try:
+                self._saved_tokens = json.loads(p.read_text("utf-8"))
+            except Exception:
+                self._saved_tokens = {}
+
+    def _save_tokens(self):
+        """Persist agent tokens to disk so they survive server restarts."""
+        try:
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self._tokens_path().with_suffix(".tmp")
+            with self._lock:
+                data = dict(self._saved_tokens)
+            tmp.write_text(json.dumps(data), "utf-8")
+            tmp.replace(self._tokens_path())
         except Exception:
             pass
 
@@ -146,7 +171,16 @@ class RuntimeRegistry:
             # recovery/reclaim still uses chat_claim, but normal startup should
             # not block on a manual confirmation step.
             state = "active"
+            # Reuse persisted token for slot-1 agents so MCP clients
+            # don't need to reconnect after server restarts.
+            token = self._saved_tokens.get(base) if slot == 1 else None
             inst = Instance(name=name, base=base, slot=slot, label=lbl, color=color, state=state)
+            if token:
+                inst.token = token
+            else:
+                # First registration — save the new token for future restarts
+                if slot == 1:
+                    self._saved_tokens[base] = inst.token
             self._instances[name] = inst
             result = _inst_dict(inst, include_token=True)
             if renamed_slot1:
@@ -154,6 +188,7 @@ class RuntimeRegistry:
 
         self._notify()
         self._save_renames()
+        self._save_tokens()
         return result
 
     def deregister(self, name: str) -> dict | None:

@@ -39,4 +39,8 @@ def load_config(root: Path | None = None) -> dict:
             else:
                 print(f"  Warning: Ignoring local agent '{name}' (already defined in config.toml)")
 
+        # Merge [auth] section — local config fully overrides base (safe: hash only, no plaintext)
+        if "auth" in local:
+            config["auth"] = {**config.get("auth", {}), **local["auth"]}
+
     return config

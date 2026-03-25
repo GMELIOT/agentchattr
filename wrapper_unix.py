@@ -175,6 +175,11 @@ def detect_permission_prompt(pane_content: str) -> dict | None:
                 break
 
         if not options:
+            # Log when pattern matched but no options found — helps diagnose missing permission cards
+            import sys
+            print(f"  [permission-debug] Pattern '{pattern}' matched but no options extracted. First 5 lines after match:", file=sys.stderr)
+            for i, l in enumerate(lines[1:6]):
+                print(f"    [{i}] {l.strip()[:80]}", file=sys.stderr)
             continue
 
         # For Claude Code, enrich the action with the tool description

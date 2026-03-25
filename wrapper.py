@@ -832,6 +832,10 @@ def main():
         project_dir=project_dir,
     )
 
+    # Gemini: use system.md as hard system prompt replacement
+    if agent == "gemini":
+        inject_env["GEMINI_SYSTEM_MD"] = "1"
+
     print(f"  === {assigned_name.capitalize()} Chat Wrapper ===")
     if not needs_proxy:
         print(f"  MCP: direct connect ({inject_mode}) with bearer auth")

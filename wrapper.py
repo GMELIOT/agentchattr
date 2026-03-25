@@ -20,10 +20,12 @@ How it works:
 
 import json
 import os
+import subprocess
 import shutil
 import sys
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -369,6 +371,159 @@ def _auth_headers(token: str, *, include_json: bool = False) -> dict[str, str]:
     if include_json:
         headers["Content-Type"] = "application/json"
     return headers
+
+
+def _sender_family(sender: str) -> str:
+    return sender.split("-", 1)[0]
+
+
+def _latest_sender_timestamp(messages: list[dict], sender_family: str) -> float | None:
+    latest = None
+    for message in messages:
+        if _sender_family(str(message.get("sender", ""))) != sender_family:
+            continue
+        timestamp = message.get("timestamp")
+        if isinstance(timestamp, (int, float)):
+            ts = float(timestamp)
+            latest = ts if latest is None else max(latest, ts)
+    return latest
+
+
+def _should_auto_stop(
+    *,
+    now: float,
+    timeout_sec: int,
+    latest_message_ts: float | None,
+    last_commit_progress_ts: float | None,
+) -> bool:
+    message_stale = latest_message_ts is None or now - latest_message_ts >= timeout_sec
+    commit_stale = (
+        last_commit_progress_ts is None
+        or now - last_commit_progress_ts >= timeout_sec
+    )
+    return message_stale and commit_stale
+
+
+def _git_branch_heads_snapshot(cwd: str) -> str | None:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "for-each-ref",
+                "--format=%(refname:short) %(objectname)",
+                "refs/heads",
+            ],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _tmux_session_exists(session_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True,
+            timeout=2,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def _post_chat_message(server_port: int, token: str, text: str, *, channel: str = "general") -> None:
+    import urllib.request
+
+    body = json.dumps({"text": text, "channel": channel}).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{server_port}/api/send",
+        method="POST",
+        data=body,
+        headers=_auth_headers(token, include_json=True),
+    )
+    with urllib.request.urlopen(req, timeout=5):
+        return
+
+
+def _fetch_recent_messages(
+    server_port: int,
+    token: str,
+    *,
+    limit: int = 200,
+    channel: str = "",
+) -> list[dict]:
+    import urllib.request
+
+    params = urllib.parse.urlencode({"limit": limit, "channel": channel})
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{server_port}/api/messages?{params}",
+        headers=_auth_headers(token),
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        payload = json.loads(resp.read())
+    return payload if isinstance(payload, list) else []
+
+
+def _gemini_auto_stop_monitor(
+    *,
+    session_name: str,
+    cwd: str,
+    server_port: int,
+    get_token_fn,
+    timeout_sec: int,
+    poll_interval_sec: int,
+) -> None:
+    last_heads_snapshot = _git_branch_heads_snapshot(cwd)
+    last_commit_progress_ts = None
+
+    while True:
+        time.sleep(poll_interval_sec)
+        if not _tmux_session_exists(session_name):
+            return
+
+        token = get_token_fn()
+        now = time.time()
+
+        try:
+            messages = _fetch_recent_messages(server_port, token)
+            latest_message_ts = _latest_sender_timestamp(messages, "gemini")
+        except Exception:
+            latest_message_ts = None
+
+        heads_snapshot = _git_branch_heads_snapshot(cwd)
+        if heads_snapshot is not None:
+            if last_heads_snapshot is not None and heads_snapshot != last_heads_snapshot:
+                last_commit_progress_ts = now
+            last_heads_snapshot = heads_snapshot
+
+        if not _should_auto_stop(
+            now=now,
+            timeout_sec=timeout_sec,
+            latest_message_ts=latest_message_ts,
+            last_commit_progress_ts=last_commit_progress_ts,
+        ):
+            continue
+
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session_name],
+            capture_output=True,
+        )
+        timeout_minutes = max(1, timeout_sec // 60)
+        try:
+            _post_chat_message(
+                server_port,
+                token,
+                f"Gemini auto-stopped: no progress for {timeout_minutes} minutes",
+            )
+        except Exception:
+            pass
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1143,29 @@ def main():
             daemon=True,
         ).start()
         print(f"  Permission interceptor active for {unix_session_name}")
+
+        if agent == "gemini":
+            timeout_sec = max(60, int(os.environ.get("AGENTCHATTR_GEMINI_IDLE_TIMEOUT_SEC", "600")))
+            poll_interval_sec = max(
+                30,
+                min(
+                    timeout_sec,
+                    int(os.environ.get("AGENTCHATTR_GEMINI_IDLE_POLL_SEC", "300")),
+                ),
+            )
+            threading.Thread(
+                target=_gemini_auto_stop_monitor,
+                kwargs={
+                    "session_name": unix_session_name,
+                    "cwd": cwd,
+                    "server_port": server_port,
+                    "get_token_fn": get_token,
+                    "timeout_sec": timeout_sec,
+                    "poll_interval_sec": poll_interval_sec,
+                },
+                daemon=True,
+            ).start()
+            print(f"  Gemini auto-stop monitor active for {unix_session_name}")
 
     run_kwargs = dict(
         command=command,

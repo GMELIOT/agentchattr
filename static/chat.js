@@ -2300,11 +2300,22 @@ function setupInput() {
                 return;
             }
         }
-        if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            sendMessage();
+        if (e.key === 'Enter') {
+            const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            if (isMobile) {
+                // Mobile: bare Enter inserts newline; Send button sends
+                if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            } else {
+                // Desktop: bare Enter sends; Shift+Enter inserts newline
+                if (!e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            }
         }
-        // Bare Enter inserts a newline (default textarea behavior)
     });
 
     // Auto-resize + slash menu + mention menu + send button state

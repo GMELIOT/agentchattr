@@ -2300,10 +2300,11 @@ function setupInput() {
                 return;
             }
         }
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             sendMessage();
         }
+        // Bare Enter inserts a newline (default textarea behavior)
     });
 
     // Auto-resize + slash menu + mention menu + send button state

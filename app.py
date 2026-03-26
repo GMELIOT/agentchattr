@@ -1192,20 +1192,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     "color": inst.get("color", "#888"),
                 }))
 
-    # Send history (per channel based on history_limit)
-    limit_val = room_settings.get("history_limit", "all")
-    count = 10000 if limit_val == "all" else int(limit_val)
-    
-    history = []
-    for ch in room_settings["channels"]:
-        history.extend(store.get_recent(count, channel=ch))
-    
-    # Sort history by timestamp to interleave messages from different channels correctly
-    history.sort(key=lambda m: m.get("timestamp", 0))
-    
-    for msg in history:
-        await websocket.send_text(json.dumps({"type": "message", "data": msg}))
-
     # Send status
     await broadcast_status()
 
@@ -1631,8 +1617,21 @@ async def import_history(file: UploadFile = File(...)):
 
 
 @app.get("/api/messages")
-async def get_messages(since_id: int = 0, limit: int = 50, channel: str = ""):
+async def get_messages(
+    since_id: int = 0,
+    before_id: int = 0,
+    limit: int = 50,
+    channel: str = "",
+):
     ch = channel if channel else None
+    limit = max(1, min(limit, 200))
+    if before_id:
+        with store._lock:
+            msgs = store._messages
+            if ch:
+                msgs = [m for m in msgs if m.get("channel", "general") == ch]
+            older = [m for m in msgs if m["id"] < before_id]
+            return list(older[-limit:])
     if since_id:
         return store.get_since(since_id, channel=ch)
     return store.get_recent(limit, channel=ch)

@@ -408,10 +408,21 @@ async function loadOlderMessages() {
 
 async function ensureViewportFilled() {
     const timeline = document.getElementById('timeline');
-    if (!timeline) return;
-    // Keep loading older messages until the content fills the viewport or no more exist
-    while (hasMoreOlderMessages && timeline.scrollHeight <= timeline.clientHeight && historyMessages.length > 0) {
-        await loadOlderMessages();
+    if (!timeline || !hasMoreOlderMessages || historyMessages.length === 0) return;
+    // Batch-fetch older messages until we have enough to fill the viewport,
+    // then render once to avoid repeated DOM thrash
+    let fetched = false;
+    while (hasMoreOlderMessages && timeline.scrollHeight <= timeline.clientHeight) {
+        const oldestId = historyMessages[0]?.id;
+        if (!oldestId) break;
+        const older = await fetchMessages({ before_id: oldestId, limit: HISTORY_BATCH_SIZE });
+        hasMoreOlderMessages = older.length === HISTORY_BATCH_SIZE;
+        if (older.length === 0) break;
+        mergeHistoryMessages(older);
+        fetched = true;
+        // Render after each batch to check if viewport is filled
+        renderHistoryMessages();
+        scrollToBottom();
     }
 }
 
@@ -1120,8 +1131,8 @@ function appendMessage(msg, options = {}) {
     // Hide messages from other channels
     if (msgChannel !== activeChannel) {
         el.style.display = 'none';
-        // Track unread for background channels (skip joins/leaves and initial history load)
-        if (soundEnabled && msg.type !== 'join' && msg.type !== 'leave') {
+        // Track unread for background channels (skip joins/leaves, initial history load, and bulk re-renders)
+        if (soundEnabled && !options.suppressScroll && msg.type !== 'join' && msg.type !== 'leave') {
             channelUnread[msgChannel] = (channelUnread[msgChannel] || 0) + 1;
             renderChannelTabs();
             // Play soft pluck for cross-channel chat messages from others (only when focused)

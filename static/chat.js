@@ -724,6 +724,10 @@ function connectWebSocket() {
             // Status is the last event sent on connect — enable sounds after history
             if (!soundEnabled) {
                 soundEnabled = true;
+                // Fallback: if handleSocketOpen didn't trigger the load, start it now
+                if (!initialHistoryLoaded && !isLoadingHistory) {
+                    loadInitialMessages();
+                }
                 setHistoryLoader('Loading messages...', isLoadingHistory || isLoadingOlder);
                 filterMessagesByChannel();
                 renderChannelTabs();

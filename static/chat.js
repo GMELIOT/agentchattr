@@ -29,6 +29,13 @@ let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
 let colorOverrides = JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}');
 let schedulesList = [];  // array of schedule objects from server
+const HISTORY_BATCH_SIZE = 50;
+let historyMessages = [];
+let loadedMessageIds = new Set();
+let initialHistoryLoaded = false;
+let isLoadingHistory = false;
+let isLoadingOlder = false;
+let hasMoreOlderMessages = true;
 
 // Expose globals that extracted modules (sessions.js, jobs.js) read via window.*
 // Using defineProperty so live values are always returned.
@@ -225,6 +232,162 @@ function dismissUpdate(e, version) {
     if (pill) pill.classList.add('hidden');
 }
 
+function updateHistoryTracking() {
+    loadedMessageIds = new Set(historyMessages.map(msg => msg.id));
+}
+
+function mergeHistoryMessages(messages) {
+    let changed = false;
+    const byId = new Map(historyMessages.map(msg => [msg.id, msg]));
+    for (const msg of messages) {
+        if (!msg || msg.id == null) continue;
+        const existing = byId.get(msg.id);
+        if (!existing || JSON.stringify(existing) !== JSON.stringify(msg)) {
+            byId.set(msg.id, msg);
+            changed = true;
+        }
+    }
+    if (changed) {
+        historyMessages = Array.from(byId.values()).sort((a, b) => a.id - b.id);
+        updateHistoryTracking();
+    }
+    return changed;
+}
+
+function removeHistoryMessages(ids) {
+    const idSet = new Set(ids.map(id => parseInt(id, 10)));
+    historyMessages = historyMessages.filter(msg => !idSet.has(msg.id));
+    updateHistoryTracking();
+}
+
+function updateHistoryMessage(updatedMsg) {
+    if (!updatedMsg || updatedMsg.id == null) return;
+    const idx = historyMessages.findIndex(msg => msg.id === updatedMsg.id);
+    if (idx === -1) {
+        historyMessages.push(updatedMsg);
+        historyMessages.sort((a, b) => a.id - b.id);
+    } else {
+        historyMessages[idx] = updatedMsg;
+    }
+    updateHistoryTracking();
+}
+
+function renameHistoryChannel(oldName, newName) {
+    historyMessages = historyMessages.map(msg => (
+        (msg.channel || 'general') === oldName ? { ...msg, channel: newName } : msg
+    ));
+}
+
+function clearHistory(channel = null) {
+    if (channel) {
+        historyMessages = historyMessages.filter(msg => (msg.channel || 'general') !== channel);
+    } else {
+        historyMessages = [];
+        hasMoreOlderMessages = true;
+    }
+    updateHistoryTracking();
+}
+
+function setHistoryLoader(text, visible = true) {
+    const loader = document.getElementById('loading-indicator');
+    if (!loader) return;
+    const label = loader.querySelector('span');
+    if (label) label.textContent = text;
+    loader.classList.toggle('hidden', !visible);
+}
+
+async function fetchMessages(params = {}) {
+    const url = new URL('/api/messages', window.location.origin);
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== '') {
+            url.searchParams.set(key, value);
+        }
+    }
+    const resp = await fetch(url, { headers: { 'X-Session-Token': SESSION_TOKEN } });
+    if (!resp.ok) throw new Error(`Failed to fetch messages (${resp.status})`);
+    return await resp.json();
+}
+
+function renderHistoryMessages({ preserveScroll = false, previousScrollTop = 0, previousScrollHeight = 0 } = {}) {
+    const timeline = document.getElementById('timeline');
+    const container = document.getElementById('messages');
+    container.innerHTML = '';
+    lastMessageDate = null;
+    lastMessageDates = {};
+    for (const msg of historyMessages) {
+        appendMessage(msg, { skipDuplicateCheck: true, suppressScroll: true });
+    }
+    filterMessagesByChannel();
+    renderChannelTabs();
+    if (preserveScroll) {
+        timeline.scrollTop = timeline.scrollHeight - previousScrollHeight + previousScrollTop;
+    }
+}
+
+async function loadInitialMessages() {
+    if (initialHistoryLoaded || isLoadingHistory) return;
+    isLoadingHistory = true;
+    setHistoryLoader('Loading messages...', true);
+    try {
+        const messages = await fetchMessages({ limit: HISTORY_BATCH_SIZE });
+        mergeHistoryMessages(messages);
+        hasMoreOlderMessages = messages.length === HISTORY_BATCH_SIZE;
+        renderHistoryMessages();
+        initialHistoryLoaded = true;
+        autoScroll = true;
+        requestAnimationFrame(() => scrollToBottom());
+    } catch (err) {
+        console.error('Initial message load failed:', err);
+    } finally {
+        isLoadingHistory = false;
+        setHistoryLoader('Loading messages...', false);
+    }
+}
+
+async function syncRecentMessages() {
+    const latestId = historyMessages[historyMessages.length - 1]?.id;
+    if (!latestId) return;
+    try {
+        const newer = await fetchMessages({ since_id: latestId });
+        for (const msg of newer) {
+            if (mergeHistoryMessages([msg])) {
+                appendMessage(msg);
+            }
+        }
+    } catch (err) {
+        console.error('Recent message sync failed:', err);
+    }
+}
+
+async function loadOlderMessages() {
+    if (!initialHistoryLoaded || isLoadingOlder || !hasMoreOlderMessages || historyMessages.length === 0) return;
+    const oldestId = historyMessages[0]?.id;
+    if (!oldestId) return;
+
+    isLoadingOlder = true;
+    setHistoryLoader('Loading older messages...', true);
+    const timeline = document.getElementById('timeline');
+    const previousScrollTop = timeline.scrollTop;
+    const previousScrollHeight = timeline.scrollHeight;
+
+    try {
+        const older = await fetchMessages({ before_id: oldestId, limit: HISTORY_BATCH_SIZE });
+        hasMoreOlderMessages = older.length === HISTORY_BATCH_SIZE;
+        if (older.length === 0) return;
+        mergeHistoryMessages(older);
+        renderHistoryMessages({
+            preserveScroll: true,
+            previousScrollTop,
+            previousScrollHeight,
+        });
+    } catch (err) {
+        console.error('Older message load failed:', err);
+    } finally {
+        isLoadingOlder = false;
+        setHistoryLoader('Loading messages...', false);
+    }
+}
+
 // --- Init ---
 
 function init() {
@@ -401,6 +564,9 @@ function connectWebSocket() {
                 }, 5000);
             }
         }, 30000);
+        if (initialHistoryLoaded) {
+            syncRecentMessages();
+        }
     };
 
     ws.onmessage = (e) => {
@@ -429,7 +595,9 @@ function connectWebSocket() {
             if (soundEnabled && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {
                 playNotificationSound(event.data.sender);
             }
-            appendMessage(event.data);
+            if (mergeHistoryMessages([event.data])) {
+                appendMessage(event.data);
+            }
         } else if (event.type === 'agent_renamed') {
             // Migrate active mentions before the agents config rebuild
             if (activeMentions.has(event.old_name)) {
@@ -532,22 +700,27 @@ function connectWebSocket() {
             updateStatus(event.data);
             // Status is the last event sent on connect — enable sounds after history
             if (!soundEnabled) {
-                soundEnabled = true;
-                const loader = document.getElementById('loading-indicator');
-                if (loader) loader.classList.add('hidden');
-                filterMessagesByChannel();
-                renderChannelTabs();
-                // Ensure refresh/reconnect lands on the latest visible message.
-                requestAnimationFrame(() => {
-                    autoScroll = true;
-                    scrollToBottom();
-                });
+                if (!initialHistoryLoaded) {
+                    loadInitialMessages().finally(() => {
+                        soundEnabled = true;
+                    });
+                } else {
+                    soundEnabled = true;
+                    setHistoryLoader('Loading messages...', false);
+                    filterMessagesByChannel();
+                    renderChannelTabs();
+                    requestAnimationFrame(() => {
+                        autoScroll = true;
+                        scrollToBottom();
+                    });
+                }
             }
         } else if (event.type === 'typing') {
             updateTyping(event.agent, event.active);
         } else if (event.type === 'settings') {
             applySettings(event.data);
         } else if (event.type === 'delete') {
+            removeHistoryMessages(event.ids || []);
             handleDeleteBroadcast(event.ids);
         } else if (event.type === 'rules' || event.type === 'decisions') {
             rules = event.data || [];
@@ -573,6 +746,7 @@ function connectWebSocket() {
             });
             _showNextPendingName();
         } else if (event.type === 'channel_renamed') {
+            renameHistoryChannel(event.old_name, event.new_name);
             // Migrate data-channel on existing DOM elements
             const container = document.getElementById('messages');
             for (const el of container.children) {
@@ -595,6 +769,7 @@ function connectWebSocket() {
             // A message was edited/demoted — re-render it in place
             const updatedMsg = event.message;
             if (updatedMsg && updatedMsg.id != null) {
+                updateHistoryMessage(updatedMsg);
                 const el = document.querySelector(`.message[data-id="${updatedMsg.id}"]`);
                 if (el) {
                     // Insert a fresh message after the old one, then remove the old
@@ -603,7 +778,7 @@ function connectWebSocket() {
                     el.remove();
                     // Temporarily hijack container to insert at the right spot
                     const container = document.getElementById('messages');
-                    appendMessage(updatedMsg);
+                    appendMessage(updatedMsg, { skipDuplicateCheck: true, suppressScroll: true });
                     // Move the newly appended message to where the old one was
                     const newEl = container.lastElementChild;
                     if (newEl && newEl.dataset.id == updatedMsg.id) {
@@ -618,6 +793,7 @@ function connectWebSocket() {
             const _clearDbgBefore = _clearDbgList ? _clearDbgList.children.length : -1;
             console.log('CLEAR_DEBUG clear event received, channel=' + (event.channel || 'ALL'), 'jobs-panel-children-before=' + _clearDbgBefore);
             const clearChannel = event.channel || null;
+            clearHistory(clearChannel);
             if (clearChannel) {
                 // Per-channel clear: remove only messages from that channel
                 const container = document.getElementById('messages');
@@ -665,8 +841,7 @@ function connectWebSocket() {
         }
         console.log('Disconnected, reconnecting in 2s...');
         soundEnabled = false;  // suppress sounds during reconnect history replay
-        const loader = document.getElementById('loading-indicator');
-        if (loader) loader.classList.remove('hidden');
+        setHistoryLoader('Loading messages...', true);
         reconnectTimer = setTimeout(connectWebSocket, 2000);
     };
 
@@ -722,8 +897,14 @@ function maybeInsertDateDivider(container, msg) {
 
 // --- Messages ---
 
-function appendMessage(msg) {
+function appendMessage(msg, options = {}) {
     const container = document.getElementById('messages');
+    if (!options.skipDuplicateCheck && msg.id != null && loadedMessageIds.has(msg.id)) {
+        return;
+    }
+    if (msg.id != null) {
+        loadedMessageIds.add(msg.id);
+    }
 
     // Insert date divider if needed
     maybeInsertDateDivider(container, msg);
@@ -936,11 +1117,13 @@ function appendMessage(msg) {
 
     if (msgChannel !== activeChannel) return;  // don't scroll for hidden messages
 
-    if (autoScroll) {
-        scrollToBottom();
-    } else {
-        unreadCount++;
-        updateScrollAnchor();
+    if (!options.suppressScroll) {
+        if (autoScroll) {
+            scrollToBottom();
+        } else {
+            unreadCount++;
+            updateScrollAnchor();
+        }
     }
 }
 
@@ -2538,6 +2721,9 @@ function setupScroll() {
     timeline.addEventListener('scroll', () => {
         const distFromBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
         autoScroll = distFromBottom < 60;
+        if (timeline.scrollTop < 40) {
+            loadOlderMessages();
+        }
 
         if (autoScroll) {
             unreadCount = 0;

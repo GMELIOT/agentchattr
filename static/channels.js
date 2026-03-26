@@ -127,6 +127,8 @@ function switchChannel(name) {
         if (el) { el.scrollIntoView({ block: 'start' }); return; }
     }
     window.scrollToBottom();
+    // Load more if filtered channel messages don't fill the viewport
+    if (typeof ensureViewportFilled === 'function') ensureViewportFilled();
 }
 
 function filterMessagesByChannel() {

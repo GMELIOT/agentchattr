@@ -343,7 +343,11 @@ async function loadInitialMessages() {
         renderHistoryMessages();
         initialHistoryLoaded = true;
         autoScroll = true;
-        requestAnimationFrame(() => scrollToBottom());
+        requestAnimationFrame(async () => {
+            scrollToBottom();
+            await ensureViewportFilled();
+            scrollToBottom();
+        });
     } catch (err) {
         console.error('Initial message load failed:', err);
     } finally {
@@ -391,6 +395,15 @@ async function loadOlderMessages() {
     } finally {
         isLoadingOlder = false;
         setHistoryLoader('Loading messages...', false);
+    }
+}
+
+async function ensureViewportFilled() {
+    const timeline = document.getElementById('timeline');
+    if (!timeline) return;
+    // Keep loading older messages until the content fills the viewport or no more exist
+    while (hasMoreOlderMessages && timeline.scrollHeight <= timeline.clientHeight && historyMessages.length > 0) {
+        await loadOlderMessages();
     }
 }
 

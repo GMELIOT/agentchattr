@@ -262,6 +262,14 @@ function ingestIncomingMessage(msg, { renderLive = false } = {}) {
     return merged;
 }
 
+function handleSocketOpen() {
+    if (initialHistoryLoaded) {
+        syncRecentMessages();
+    } else {
+        loadInitialMessages();
+    }
+}
+
 function removeHistoryMessages(ids) {
     const idSet = new Set(ids.map(id => parseInt(id, 10)));
     historyMessages = historyMessages.filter(msg => !idSet.has(msg.id));
@@ -583,9 +591,7 @@ function connectWebSocket() {
                 }, 5000);
             }
         }, 30000);
-        if (initialHistoryLoaded) {
-            syncRecentMessages();
-        }
+        handleSocketOpen();
     };
 
     ws.onmessage = (e) => {
@@ -717,15 +723,11 @@ function connectWebSocket() {
             updateStatus(event.data);
             // Status is the last event sent on connect — enable sounds after history
             if (!soundEnabled) {
-                if (!initialHistoryLoaded) {
-                    loadInitialMessages().finally(() => {
-                        soundEnabled = true;
-                    });
-                } else {
-                    soundEnabled = true;
-                    setHistoryLoader('Loading messages...', false);
-                    filterMessagesByChannel();
-                    renderChannelTabs();
+                soundEnabled = true;
+                setHistoryLoader('Loading messages...', isLoadingHistory || isLoadingOlder);
+                filterMessagesByChannel();
+                renderChannelTabs();
+                if (initialHistoryLoaded) {
                     requestAnimationFrame(() => {
                         autoScroll = true;
                         scrollToBottom();

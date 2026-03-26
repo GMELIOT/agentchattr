@@ -47,6 +47,7 @@ function extractFunction(source, name) {
 
 const chatJs = fs.readFileSync(path.join(__dirname, '..', 'static', 'chat.js'), 'utf8');
 const ingestSource = extractFunction(chatJs, 'ingestIncomingMessage');
+const openSource = extractFunction(chatJs, 'handleSocketOpen');
 
 let appendCalls = [];
 const context = {
@@ -82,3 +83,27 @@ assert(merged === true, 'expected non-live merge to succeed');
 assert(appendCalls.length === 0, 'expected non-live merge not to append');
 
 console.log('test_bottom_up_chat_loading: PASS');
+
+let loadCalls = 0;
+let syncCalls = 0;
+const openContext = {
+    initialHistoryLoaded: false,
+    loadInitialMessages() {
+        loadCalls += 1;
+    },
+    syncRecentMessages() {
+        syncCalls += 1;
+    },
+};
+const handleSocketOpen = vm.runInNewContext(`(${openSource})`, openContext);
+
+handleSocketOpen();
+assert(loadCalls === 1, 'expected socket open to trigger initial history load before bootstrap completes');
+assert(syncCalls === 0, 'expected socket open not to sync recent messages before initial history exists');
+
+openContext.initialHistoryLoaded = true;
+handleSocketOpen();
+assert(loadCalls === 1, 'expected socket open not to trigger another initial load after bootstrap');
+assert(syncCalls === 1, 'expected socket open to sync recent messages after bootstrap');
+
+console.log('test_bottom_up_chat_loading socket-open bootstrap: PASS');

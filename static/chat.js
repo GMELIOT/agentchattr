@@ -254,6 +254,14 @@ function mergeHistoryMessages(messages) {
     return changed;
 }
 
+function ingestIncomingMessage(msg, { renderLive = false } = {}) {
+    const merged = mergeHistoryMessages([msg]);
+    if (merged && renderLive) {
+        appendMessage(msg, { skipDuplicateCheck: true });
+    }
+    return merged;
+}
+
 function removeHistoryMessages(ids) {
     const idSet = new Set(ids.map(id => parseInt(id, 10)));
     historyMessages = historyMessages.filter(msg => !idSet.has(msg.id));
@@ -350,9 +358,7 @@ async function syncRecentMessages() {
     try {
         const newer = await fetchMessages({ since_id: latestId });
         for (const msg of newer) {
-            if (mergeHistoryMessages([msg])) {
-                appendMessage(msg);
-            }
+            ingestIncomingMessage(msg, { renderLive: true });
         }
     } catch (err) {
         console.error('Recent message sync failed:', err);
@@ -595,9 +601,7 @@ function connectWebSocket() {
             if (soundEnabled && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {
                 playNotificationSound(event.data.sender);
             }
-            if (mergeHistoryMessages([event.data])) {
-                appendMessage(event.data);
-            }
+            ingestIncomingMessage(event.data, { renderLive: true });
         } else if (event.type === 'agent_renamed') {
             // Migrate active mentions before the agents config rebuild
             if (activeMentions.has(event.old_name)) {

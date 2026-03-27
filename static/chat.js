@@ -2009,32 +2009,45 @@ const _ROLE_EMOJI = {
     'chaos gremlin': '😈', 'red team': '🛡️', 'roast': '🔥', 'hype': '🎉',
 };
 
+function applyAgentStatusClasses(el, info, { preservePending = false } = {}) {
+    if (!el) return;
+
+    el.classList.remove('available', 'working', 'offline');
+    if (preservePending && el.classList.contains('pending')) {
+        if (info.color) el.style.setProperty('--agent-color', info.color);
+        return;
+    }
+
+    if (info.busy && info.available) {
+        el.classList.add('working');
+    } else if (info.available) {
+        el.classList.add('available');
+    } else {
+        el.classList.add('offline');
+    }
+
+    if (info.color) el.style.setProperty('--agent-color', info.color);
+}
+
 function updateStatus(data) {
     for (const [name, info] of Object.entries(data)) {
         if (name === 'paused') continue;
         const pill = document.getElementById(`status-${name}`);
         if (!pill) continue;
-
-        pill.classList.remove('available', 'working', 'offline');
-        // Pending pills keep their pending animation (set in buildStatusPills)
-        if (!pill.classList.contains('pending')) {
-            if (info.busy && info.available) {
-                pill.classList.add('working');
-            } else if (info.available) {
-                pill.classList.add('available');
-            } else {
-                pill.classList.add('offline');
-            }
-        }
-
-        // Keep agent color in sync
-        if (info.color) pill.style.setProperty('--agent-color', info.color);
+        applyAgentStatusClasses(pill, info, { preservePending: true });
 
         // Track role (displayed on bubbles, not on pill)
         if (info.role !== undefined) {
             _agentRoles[name] = info.role;
             _syncBubbleRolePills(name);
         }
+    }
+
+    // Mirror status state to mention toggle pills (mobile animation)
+    for (const [name, info] of Object.entries(data)) {
+        if (name === 'paused') continue;
+        const toggle = document.querySelector(`.mention-toggle[data-agent="${name}"]`);
+        applyAgentStatusClasses(toggle, info);
     }
 }
 

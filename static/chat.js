@@ -929,6 +929,19 @@ function maybeInsertDateDivider(container, msg) {
     }
 }
 
+function getPermissionOptionAction(option) {
+    const label = String(option && option.label || '').trim().toLowerCase();
+    const key = String(option && option.key || '').trim().toLowerCase();
+
+    if (key === 'esc' || key === 'escape') {
+        return 'deny';
+    }
+    if (/\b(deny|denied|dismiss|cancel|reject|decline|skip|abort|block|no)\b/.test(label)) {
+        return 'deny';
+    }
+    return 'approve';
+}
+
 // --- Messages ---
 
 function appendMessage(msg, options = {}) {
@@ -1010,15 +1023,14 @@ function appendMessage(msg, options = {}) {
                 ` : ''}
                 ${isPending ? `
                     <div class="permission-actions">
-                        ${options.map((opt, index) => {
-                            const isLast = index === options.length - 1;
-                            const action = isLast ? 'deny' : 'approve';
-                            return `<button class="permission-btn ${isLast ? 'permission-deny' : 'permission-approve'}"
-                                            onclick="respondToPermission('${meta.id}', '${opt.key}', '${action}')">${escapeHtml(opt.label)}</button>`;
+                        ${options.map((opt) => {
+                            const optionAction = getPermissionOptionAction(opt);
+                            return `<button class="permission-btn ${optionAction === 'deny' ? 'permission-deny' : 'permission-approve'}"
+                                            onclick="respondToPermission('${meta.id}', '${opt.key}', '${optionAction}')">${escapeHtml(opt.label)}</button>`;
                         }).join('')}
                     </div>
                 ` : `
-                    <div class="proposal-status-resolved">${status === 'approved' ? '✓ Approved' : '✗ Denied'} (${escapeHtml(meta.chosen_label || '')})</div>
+                    <div class="proposal-status-resolved">${status === 'approved' ? '✓ Approved' : '✗ Denied'}${meta.chosen_label ? ` (${escapeHtml(meta.chosen_label)})` : ''}</div>
                 `}
             </div>`;
     } else if (msg.type === 'rule_proposal') {

@@ -695,6 +695,14 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
 # Permission interceptor
 # ---------------------------------------------------------------------------
 
+def _fallback_permission_key(options):
+    for option in options or []:
+        key = str(option.get("key", "")).strip()
+        if key:
+            return key
+    return ""
+
+
 def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                         get_token_fn=None, session_name: str = "",
                         poll_interval: float = 2.0):
@@ -790,10 +798,22 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
 
                     status = poll_data.get("status")
                     if status == "approved":
-                        key = poll_data.get("key", "")
-                        if key:
-                            inject_keystroke(session_name, key)
-                            print(f"  [permission] Approved: {prompt['action'][:60]} → key '{key}'")
+                        key = str(poll_data.get("key", "")).strip()
+                        if not key:
+                            key = _fallback_permission_key(prompt.get("options"))
+                            if key:
+                                print(
+                                    "  [permission] Approved response missing key; "
+                                    f"falling back to first option key '{key}'"
+                                )
+                            else:
+                                print(
+                                    "  [permission] ERROR approved response missing key "
+                                    "and no fallback option was available"
+                                )
+                                break
+                        inject_keystroke(session_name, key)
+                        print(f"  [permission] Approved: {prompt['action'][:60]} → key '{key}'")
                         break
                     elif status == "denied":
                         # Send Escape or the deny key
@@ -808,8 +828,10 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                 except urllib.error.HTTPError as exc:
                     if exc.code == 404:
                         break  # permission was cleaned up
+                    print(f"  [permission] Poll HTTP error ({exc.code}) for {perm_id}: {exc}")
                     time.sleep(2)
-                except Exception:
+                except Exception as exc:
+                    print(f"  [permission] Poll error for {perm_id}: {exc}")
                     time.sleep(2)
 
             # Reset so we can detect new prompts

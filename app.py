@@ -1116,9 +1116,18 @@ async def broadcast_permission(action: str, data: dict):
     for client in list(ws_clients):
         try:
             await client.send_text(payload)
-        except Exception:
+        except Exception as exc:
+            log.warning("Permission broadcast failed for action %s: %s", action, exc)
             dead.add(client)
     ws_clients.difference_update(dead)
+
+
+def _chosen_permission_label(options: list[dict], key: str) -> str:
+    for option in options or []:
+        option_key = str(option.get("key", "")).strip().lower()
+        if option_key == key.lower():
+            return str(option.get("label", "")).strip()
+    return ""
 
 
 def _on_registry_change():
@@ -2183,6 +2192,7 @@ async def create_permission(request: Request):
         "raw_block": raw_block,
         "status": "pending",
         "key": "",
+        "chosen_label": "",
         "created_at": _time.time(),
     }
     pending_permissions[perm_id] = perm
@@ -2228,10 +2238,18 @@ async def respond_permission(perm_id: str, request: Request):
 
     perm["status"] = "approved" if action == "approve" else "denied"
     perm["key"] = key
+    chosen_label = _chosen_permission_label(perm.get("options", []), key)
+    perm["chosen_label"] = chosen_label
 
     await broadcast_permission("response", perm)
 
-    log.info("Permission %s %s: key=%s", perm_id, perm["status"], key)
+    log.info(
+        "Permission %s %s: key=%s label=%s",
+        perm_id,
+        perm["status"],
+        key,
+        chosen_label,
+    )
     return {"ok": True, "status": perm["status"]}
 
 

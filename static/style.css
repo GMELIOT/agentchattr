@@ -2959,6 +2959,57 @@ footer {
     color: var(--agent-color, var(--accent));
 }
 
+@media (max-width: 768px) {
+    .mention-toggle.working {
+        position: relative;
+        border-color: transparent;
+        color: var(--agent-color, var(--accent));
+        background: color-mix(in srgb, var(--agent-color, var(--accent)) 10%, transparent);
+        --border-angle: 0deg;
+    }
+
+    .mention-toggle.working::before {
+        content: '';
+        position: absolute;
+        inset: -1.5px;
+        border-radius: inherit;
+        padding: 1.5px;
+        background: conic-gradient(
+            from var(--border-angle),
+            var(--agent-color, var(--accent)),
+            transparent 40%,
+            transparent 60%,
+            var(--agent-color, var(--accent))
+        );
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+        animation: spin-border 2s linear infinite;
+    }
+
+    .mention-toggle.offline {
+        opacity: 0.4;
+        color: var(--text-dim);
+        border-color: var(--border);
+    }
+
+    .mention-toggle.active.working {
+        background: color-mix(in srgb, var(--agent-color, var(--accent)) 25%, transparent);
+        border-color: var(--agent-color, var(--accent));
+    }
+
+    .mention-toggle.active.offline {
+        opacity: 0.6;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mention-toggle.working::before {
+        animation: none;
+    }
+}
+
 #attachments {
     display: flex;
     gap: 8px;

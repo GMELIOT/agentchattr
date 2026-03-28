@@ -942,6 +942,69 @@ function getPermissionOptionAction(option) {
     return 'approve';
 }
 
+function isStructuredPermission(meta) {
+    return Boolean(meta && meta.source_kind === 'structured' && (meta.tool_name || meta.description));
+}
+
+function renderPermissionContent(meta, isPending) {
+    const options = meta.options || [];
+    if (isStructuredPermission(meta)) {
+        const toolName = escapeHtml(meta.tool_name || 'Permission');
+        const description = escapeHtml(meta.description || meta.action || '');
+        const preview = meta.input_preview ? `
+                    <div class="permission-preview-wrap">
+                        <div class="permission-preview-label">Preview</div>
+                        <pre class="permission-preview">${escapeHtml(meta.input_preview)}</pre>
+                    </div>
+                ` : '';
+        const actions = isPending ? `
+                    <div class="permission-actions">
+                        ${options.map((opt) => {
+                            const optionAction = getPermissionOptionAction(opt);
+                            return `<button class="permission-btn ${optionAction === 'deny' ? 'permission-deny' : 'permission-approve'}"
+                                            onclick="respondToPermission('${meta.id}', '${opt.key}', '${optionAction}')">${escapeHtml(opt.label)}</button>`;
+                        }).join('')}
+                    </div>
+                ` : `
+                    <div class="proposal-status-resolved">${meta.status === 'approved' ? '✓ Approved' : '✗ Denied'}${meta.chosen_label ? ` (${escapeHtml(meta.chosen_label)})` : ''}</div>
+                `;
+
+        return `
+                <div class="permission-structured">
+                    <div class="permission-structured-header">
+                        <span class="permission-tool-badge permission-tool-${String(meta.tool_name || '').trim().toLowerCase()}">${toolName}</span>
+                        ${meta.request_id ? `<span class="permission-request-id">${escapeHtml(meta.request_id)}</span>` : ''}
+                    </div>
+                    <div class="permission-action">${description}</div>
+                    ${preview}
+                    ${actions}
+                </div>
+            `;
+    }
+
+    const actionText = escapeHtml(meta.action || '');
+    return `
+                <div class="permission-action">${actionText}</div>
+                ${meta.raw_block ? `
+                    <details class="permission-context">
+                        <summary>Context</summary>
+                        <pre class="permission-raw-block">${escapeHtml(meta.raw_block)}</pre>
+                    </details>
+                ` : ''}
+                ${isPending ? `
+                    <div class="permission-actions">
+                        ${options.map((opt) => {
+                            const optionAction = getPermissionOptionAction(opt);
+                            return `<button class="permission-btn ${optionAction === 'deny' ? 'permission-deny' : 'permission-approve'}"
+                                            onclick="respondToPermission('${meta.id}', '${opt.key}', '${optionAction}')">${escapeHtml(opt.label)}</button>`;
+                        }).join('')}
+                    </div>
+                ` : `
+                    <div class="proposal-status-resolved">${meta.status === 'approved' ? '✓ Approved' : '✗ Denied'}${meta.chosen_label ? ` (${escapeHtml(meta.chosen_label)})` : ''}</div>
+                `}
+            `;
+}
+
 // --- Messages ---
 
 function appendMessage(msg, options = {}) {
@@ -1003,35 +1066,16 @@ function appendMessage(msg, options = {}) {
     } else if (msg.type === 'permission') {
         el.classList.add('proposal-msg');
         const meta = msg.metadata || {};
-        const actionText = escapeHtml(meta.action || '');
-        const options = meta.options || [];
         const status = meta.status || 'pending';
         const isPending = status === 'pending';
         const color = getColor(msg.sender);
         el.innerHTML = `
-            <div class="permission-card ${isPending ? '' : 'proposal-resolved'}">
+            <div class="permission-card ${isStructuredPermission(meta) ? 'permission-card-structured' : ''} ${isPending ? '' : 'proposal-resolved'}">
                 <div class="proposal-header">
                     <span class="permission-pill">Permission Request</span>
                     <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
                 </div>
-                <div class="permission-action">${actionText}</div>
-                ${meta.raw_block ? `
-                    <details class="permission-context">
-                        <summary>Context</summary>
-                        <pre class="permission-raw-block">${escapeHtml(meta.raw_block)}</pre>
-                    </details>
-                ` : ''}
-                ${isPending ? `
-                    <div class="permission-actions">
-                        ${options.map((opt) => {
-                            const optionAction = getPermissionOptionAction(opt);
-                            return `<button class="permission-btn ${optionAction === 'deny' ? 'permission-deny' : 'permission-approve'}"
-                                            onclick="respondToPermission('${meta.id}', '${opt.key}', '${optionAction}')">${escapeHtml(opt.label)}</button>`;
-                        }).join('')}
-                    </div>
-                ` : `
-                    <div class="proposal-status-resolved">${status === 'approved' ? '✓ Approved' : '✗ Denied'}${meta.chosen_label ? ` (${escapeHtml(meta.chosen_label)})` : ''}</div>
-                `}
+                ${renderPermissionContent(meta, isPending)}
             </div>`;
     } else if (msg.type === 'rule_proposal') {
         el.classList.add('proposal-msg');

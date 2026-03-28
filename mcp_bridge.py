@@ -921,4 +921,3 @@ def run_http_server():
 def run_sse_server():
     """Block — run SSE MCP in a background thread."""
     mcp_sse.run(transport="sse")
-

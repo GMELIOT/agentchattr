@@ -1154,17 +1154,21 @@ def main():
         _set_activity_checker(get_activity_checker(unix_session_name, trigger_flag=_trigger_flag))
 
         # Start permission interceptor thread (unix only — needs tmux)
-        threading.Thread(
-            target=_permission_watcher,
-            kwargs={
-                "get_identity_fn": get_identity,
-                "server_port": server_port,
-                "get_token_fn": get_token,
-                "session_name": unix_session_name,
-            },
-            daemon=True,
-        ).start()
-        print(f"  Permission interceptor active for {unix_session_name}")
+        # Skip for claude when PermissionRequest hook is configured (avoids duplicates)
+        if agent != "claude":
+            threading.Thread(
+                target=_permission_watcher,
+                kwargs={
+                    "get_identity_fn": get_identity,
+                    "server_port": server_port,
+                    "get_token_fn": get_token,
+                    "session_name": unix_session_name,
+                },
+                daemon=True,
+            ).start()
+            print(f"  Permission interceptor active for {unix_session_name}")
+        else:
+            print(f"  Permission interceptor SKIPPED for {unix_session_name} (hook-based)")
 
         if agent == "gemini":
             timeout_sec = max(60, int(os.environ.get("AGENTCHATTR_GEMINI_IDLE_TIMEOUT_SEC", "7200")))

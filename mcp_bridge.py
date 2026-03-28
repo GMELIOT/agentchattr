@@ -892,21 +892,20 @@ _ALL_TOOLS = [
 ]
 
 
-def _create_server(port: int, stateless: bool = False) -> FastMCP:
+def _create_server(port: int) -> FastMCP:
     server = FastMCP(
         "agentchattr",
         host="127.0.0.1",
         port=port,
         log_level="ERROR",
         instructions=_MCP_INSTRUCTIONS,
-        stateless_http=stateless,
     )
     for func in _ALL_TOOLS:
         server.tool()(func)
     return server
 
 
-mcp_http = _create_server(8200, stateless=True)  # streamable-http for Claude/Codex/Qwen
+mcp_http = _create_server(8200)  # streamable-http for Claude/Codex/Qwen
 mcp_sse = _create_server(8201)   # SSE for Gemini
 
 # Keep backward compat — run.py references mcp_bridge.store

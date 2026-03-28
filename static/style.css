@@ -4584,6 +4584,14 @@ footer {
     border-color: rgba(16, 185, 129, 0.32);
     color: #34d399;
 }
+.permission-tool-read,
+.permission-tool-glob,
+.permission-tool-grep,
+.permission-tool-other {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.28);
+    color: #cbd5e1;
+}
 .permission-request-id {
     font-size: 11px;
     font-weight: 600;

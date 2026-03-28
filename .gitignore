@@ -17,8 +17,13 @@ build/
 .gemini/
 .claude/
 tests/
+!tests/
+!tests/test_permission_interceptor.py
+!tests/test_permission_policy.py
 agents_lineup.svg
 docs/
+!docs/
+!docs/permission-prompts.md
 goals.py
 pr-reviews/
 agentchattr-*.zip

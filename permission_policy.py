@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -33,10 +34,13 @@ class PermissionPolicy:
         compiled: list[tuple[str, re.Pattern[str]]] = []
         for pattern in patterns:
             try:
-                compiled.append((pattern, re.compile(pattern, re.IGNORECASE)))
+                compiled.append((pattern, self._compile_pattern(pattern)))
             except re.error as exc:
                 log.error("[policy] invalid %s regex %r: %s", bucket, pattern, exc)
         return compiled
+
+    def _compile_pattern(self, pattern: str) -> re.Pattern[str]:
+        return re.compile(pattern, re.IGNORECASE)
 
     def _match(
         self, action: str, compiled: list[tuple[str, re.Pattern[str]]]
@@ -75,13 +79,16 @@ class PermissionPolicy:
             raise ValueError("pattern required")
         if pattern in self._auto_allow_patterns:
             return
+        try:
+            compiled = self._compile_pattern(pattern)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {exc}") from exc
         self._persist_auto_allow(pattern)
         self._auto_allow_patterns.append(pattern)
-        try:
-            self._compiled_auto_allow.append((pattern, re.compile(pattern, re.IGNORECASE)))
-        except re.error as exc:
-            self._auto_allow_patterns.pop()
-            raise ValueError(f"invalid regex: {exc}") from exc
+        self._compiled_auto_allow.append((pattern, compiled))
+
+    def _toml_string(self, value: str) -> str:
+        return json.dumps(value)
 
     def _persist_auto_allow(self, pattern: str) -> None:
         if not self.config_path:
@@ -101,7 +108,7 @@ class PermissionPolicy:
                 "dry_run = true\n"
                 "auto_expire_seconds = 300\n"
                 "auto_allow = [\n"
-                f'    "{pattern}",\n'
+                f"    {self._toml_string(pattern)},\n"
                 "]\n"
                 "always_ask = []\n"
             )
@@ -113,16 +120,14 @@ class PermissionPolicy:
             content[permissions_idx:],
         )
         if auto_allow_match:
-            start = permissions_idx + auto_allow_match.start("body")
             end = permissions_idx + auto_allow_match.end("body")
-            body = content[start:end]
-            insertion = f'    "{pattern}",\n'
+            insertion = f"    {self._toml_string(pattern)},\n"
             updated = content[:end] + insertion + content[end:]
             self.config_path.write_text(updated, "utf-8")
             return
 
         section_start = permissions_idx + len("[permissions]\n")
-        insertion = 'auto_allow = [\n    "%s",\n]\n' % pattern
+        insertion = "auto_allow = [\n    %s,\n]\n" % self._toml_string(pattern)
         updated = content[:section_start] + insertion + content[section_start:]
         self.config_path.write_text(updated, "utf-8")
 

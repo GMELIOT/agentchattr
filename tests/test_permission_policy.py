@@ -1,5 +1,6 @@
 import logging
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -104,6 +105,61 @@ class PermissionPolicyTests(unittest.TestCase):
         decision = policy.evaluate("Read src/app.py")
         self.assertEqual(decision["decision"], "auto_allow")
         self.assertTrue(any("invalid auto_allow regex" in line for line in logs.output))
+
+    def test_add_auto_allow_invalid_regex_does_not_persist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            original = (
+                "[permissions]\n"
+                "dry_run = false\n"
+                "auto_expire_seconds = 300\n"
+                "auto_allow = [\n"
+                '    "Read .+",\n'
+                "]\n"
+                "always_ask = []\n"
+            )
+            config_path.write_text(original, "utf-8")
+            policy = PermissionPolicy(
+                auto_allow=[r"Read .+"],
+                always_ask=[],
+                dry_run=False,
+                config_path=config_path,
+            )
+
+            with self.assertRaisesRegex(ValueError, "invalid regex"):
+                policy.add_auto_allow(r"[")
+
+            self.assertEqual(config_path.read_text("utf-8"), original)
+            self.assertEqual(policy.get_rules()["auto_allow"], [r"Read .+"])
+
+    def test_add_auto_allow_serializes_regex_safely_for_toml(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                "[permissions]\n"
+                "dry_run = false\n"
+                "auto_expire_seconds = 300\n"
+                "auto_allow = [\n"
+                "]\n"
+                "always_ask = []\n",
+                "utf-8",
+            )
+            policy = PermissionPolicy(
+                auto_allow=[],
+                always_ask=[],
+                dry_run=False,
+                config_path=config_path,
+            )
+            pattern = r'Read "quoted" \w+'
+
+            policy.add_auto_allow(pattern)
+
+            parsed = tomllib.loads(config_path.read_text("utf-8"))
+            self.assertEqual(parsed["permissions"]["auto_allow"], [pattern])
+            self.assertEqual(policy.evaluate('Read "quoted" token'), {
+                "decision": "auto_allow",
+                "matched_rule": pattern,
+            })
 
 
 if __name__ == "__main__":

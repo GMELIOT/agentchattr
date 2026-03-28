@@ -282,6 +282,15 @@ def _install_security_middleware(token: str, cfg: dict):
                     )
                 return await call_next(request)
 
+            if path == "/api/hooks/permission-request":
+                client_ip = request.client.host if request.client else ""
+                if client_ip not in ("127.0.0.1", "::1", "localhost"):
+                    return JSONResponse(
+                        {"error": f"forbidden: permission hook is restricted to local loopback. Source {client_ip} is not allowed."},
+                        status_code=403,
+                    )
+                return await call_next(request)
+
             # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
             origin = request.headers.get("origin")
             if origin and origin not in allowed_origins:
@@ -1146,6 +1155,71 @@ def _structured_permission_options() -> list[dict[str, str]]:
         {"key": "allow", "label": "Approve"},
         {"key": "deny", "label": "Deny"},
     ]
+
+
+def _truncate_permission_text(value: str, limit: int = 500) -> str:
+    value = value.strip()
+    if len(value) <= limit:
+        return value
+    return value[: max(limit - 3, 0)].rstrip() + "..."
+
+
+def _build_hook_description(tool_input: object) -> str:
+    if isinstance(tool_input, dict):
+        for key in ("description", "command"):
+            value = str(tool_input.get(key, "")).strip()
+            if value:
+                return value
+        try:
+            return _truncate_permission_text(json.dumps(tool_input, sort_keys=True))
+        except TypeError:
+            return _truncate_permission_text(str(tool_input))
+    if tool_input is None:
+        return ""
+    return _truncate_permission_text(str(tool_input))
+
+
+def _build_hook_input_preview(tool_input: object) -> str:
+    if tool_input is None:
+        return ""
+    if isinstance(tool_input, str):
+        return _truncate_permission_text(tool_input)
+    try:
+        return _truncate_permission_text(json.dumps(tool_input, sort_keys=True))
+    except TypeError:
+        return _truncate_permission_text(str(tool_input))
+
+
+def _hook_permission_response(hook_event_name: str, behavior: str, message: str = "") -> JSONResponse:
+    decision = {"behavior": behavior}
+    if message.strip():
+        decision["message"] = message.strip()
+    return JSONResponse(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": hook_event_name,
+                "decision": decision,
+            }
+        }
+    )
+
+
+async def _wait_for_permission_resolution(perm_id: str, timeout_seconds: int) -> dict:
+    import time as _time
+
+    deadline = _time.time() + max(timeout_seconds, 0)
+    while True:
+        perm = pending_permissions.get(perm_id)
+        if not perm:
+            return {"id": perm_id, "status": "expired"}
+        if perm["status"] != "pending":
+            return perm
+        if _time.time() >= deadline:
+            perm["status"] = "expired"
+            await broadcast_permission("expired", perm)
+            log.info("Permission %s expired while waiting on hook response", perm_id)
+            return perm
+        await asyncio.sleep(0.5)
 
 
 async def _store_permission_request(
@@ -2318,6 +2392,50 @@ async def create_structured_permission(request: Request):
         description=description,
         input_preview=input_preview,
     )
+
+
+@app.post("/api/hooks/permission-request")
+async def permission_request_hook(request: Request):
+    """Claude PermissionRequest hook relay with blocking allow/deny response."""
+    body = await request.json()
+    hook_event_name = str(body.get("hook_event_name", "PermissionRequest")).strip() or "PermissionRequest"
+    session_id = str(body.get("session_id", "")).strip()
+    tool_name = str(body.get("tool_name", "")).strip()
+    tool_input = body.get("tool_input")
+
+    if not tool_name:
+        return JSONResponse({"error": "tool_name required"}, status_code=400)
+
+    description = _build_hook_description(tool_input) or tool_name
+    input_preview = _build_hook_input_preview(tool_input)
+
+    decision = {"decision": "ask_human", "matched_rule": None}
+    if permission_policy:
+        decision = permission_policy.evaluate(description)
+
+    if decision["decision"] == "auto_allow":
+        log.info("Permission hook auto-allowed for %s: %s", tool_name, description[:80])
+        return _hook_permission_response(hook_event_name, "allow")
+
+    created = await create_structured_permission_request(
+        agent="claude",
+        request_id=session_id or str(uuid.uuid4())[:8],
+        tool_name=tool_name,
+        description=description,
+        input_preview=input_preview,
+    )
+    if created.get("status") != "pending":
+        return _hook_permission_response(hook_event_name, "allow")
+
+    resolved = await _wait_for_permission_resolution(
+        created["id"],
+        permission_auto_expire_seconds,
+    )
+    if resolved["status"] == "approved":
+        return _hook_permission_response(hook_event_name, "allow")
+    if resolved["status"] == "denied":
+        return _hook_permission_response(hook_event_name, "deny", "Denied by user")
+    return _hook_permission_response(hook_event_name, "deny", "Permission request timed out")
 
 
 @app.get("/api/permissions/{perm_id}")

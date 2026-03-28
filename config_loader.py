@@ -13,10 +13,10 @@ ROOT = Path(__file__).parent
 def load_config(root: Path | None = None) -> dict:
     """Load config.toml and merge config.local.toml if it exists.
 
-    config.local.toml is gitignored and intended for user-specific agents
+    config.local.toml is gitignored and intended for user-specific settings
     (e.g. local LLM endpoints) that shouldn't be committed.
-    Only the [agents] section is merged — local entries are added alongside
-    (not replacing) the agents defined in config.toml.
+    The [agents] section is merged additively so local entries do not replace
+    the built-in agents. Other supported sections are shallow-merged.
     """
     root = root or ROOT
     config_path = root / "config.toml"
@@ -42,5 +42,9 @@ def load_config(root: Path | None = None) -> dict:
         # Merge [auth] section — local config fully overrides base (safe: hash only, no plaintext)
         if "auth" in local:
             config["auth"] = {**config.get("auth", {}), **local["auth"]}
+
+        # Merge [permissions] section — local config can override defaults safely.
+        if "permissions" in local:
+            config["permissions"] = {**config.get("permissions", {}), **local["permissions"]}
 
     return config

@@ -78,6 +78,36 @@ sse_port = 8201
 upload_dir = "./uploads"
 max_size_mb = 10
 
+[permissions]
+dry_run = true
+auto_expire_seconds = 300
+
+auto_allow = [
+  "Read .+",
+  "Glob .+",
+  "Grep .+",
+  "mcp.*chat_read",
+  "mcp.*chat_send",
+  "mcp.*chat_who",
+  "mcp.*chat_channels",
+  "mcp.*kb_context",
+  "mcp.*kb_search",
+  "mcp.*kb_list",
+  "npm (test|run|exec)",
+  "npx (tsc|vitest|eslint)",
+  "git (status|diff|log|fetch|branch)",
+  "Bash.*git (status|diff|log|fetch|branch)",
+]
+
+always_ask = [
+  "git (push|merge|reset|rebase|commit|cherry-pick)",
+  "Bash.*git (push|merge|reset|rebase|commit|cherry-pick)",
+  "rm |delete|drop",
+  "npm install",
+  "Edit .+",
+  "Write .+",
+]
+
 # --- MCP injection modes ---
 # By default, claude/codex/gemini/kimi use built-in MCP config injection.
 # For other CLI agents, set mcp_inject to tell the wrapper how to inject auth:

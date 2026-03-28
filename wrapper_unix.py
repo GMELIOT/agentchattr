@@ -89,8 +89,8 @@ def get_activity_checker(session_name, trigger_flag=None):
 PERMISSION_PATTERNS = [
     # Claude Code: "Do you want to ..." with numbered options
     (r"Do you want to ([\s\S]+?\?)", "claude"),
-    # Codex: "Would you like to make the following edits?"
-    (r"Would you like to make the following edits\?", "codex"),
+    # Codex: "Would you like to ..." (run command, make edits, etc.)
+    (r"Would you like to .*\?", "codex"),
     # Gemini: "Action Required" followed by "Apply this change?"
     (r"Action Required", "gemini"),
 ]
@@ -162,9 +162,13 @@ def detect_permission_prompt(pane_content: str) -> dict | None:
             # Match numbered options: "1. Yes" or "> 1. Yes" or "● 1. Allow once"
             opt_match = re.match(r"[>●❯]?\s*(\d+)\.\s+(.+)", stripped)
             if opt_match:
+                label = opt_match.group(2).strip()
+                # Extract inline key hint like "(y)" or "(esc)" from label
+                key_hint = re.search(r"\(([^)]+)\)\s*$", label)
+                key = key_hint.group(1).strip().lower() if key_hint else opt_match.group(1)
                 options.append({
-                    "key": opt_match.group(1),
-                    "label": opt_match.group(2).strip(),
+                    "key": key,
+                    "label": label,
                 })
                 continue
 

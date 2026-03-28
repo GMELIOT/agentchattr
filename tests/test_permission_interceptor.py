@@ -164,6 +164,16 @@ class PermissionResponseHelperTests(unittest.TestCase):
             "Cancel",
         )
 
+    def test_structured_permission_options_are_allow_and_deny(self):
+        structured_options = load_function_from_file(ROOT / "app.py", "_structured_permission_options")
+        self.assertEqual(
+            structured_options(),
+            [
+                {"key": "allow", "label": "Approve"},
+                {"key": "deny", "label": "Deny"},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

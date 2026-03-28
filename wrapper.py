@@ -1167,7 +1167,7 @@ def main():
         print(f"  Permission interceptor active for {unix_session_name}")
 
         if agent == "gemini":
-            timeout_sec = max(60, int(os.environ.get("AGENTCHATTR_GEMINI_IDLE_TIMEOUT_SEC", "600")))
+            timeout_sec = max(60, int(os.environ.get("AGENTCHATTR_GEMINI_IDLE_TIMEOUT_SEC", "7200")))
             poll_interval_sec = max(
                 30,
                 min(

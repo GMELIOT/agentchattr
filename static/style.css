@@ -4543,3 +4543,94 @@ footer {
     max-height: 200px;
     overflow-y: auto;
 }
+.permission-card-structured {
+    background: rgba(15, 23, 42, 0.86);
+    border-color: rgba(148, 163, 184, 0.28);
+}
+.permission-structured {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.permission-structured-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.permission-tool-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+}
+.permission-tool-bash {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.32);
+    color: #f59e0b;
+}
+.permission-tool-edit {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.32);
+    color: #60a5fa;
+}
+.permission-tool-write {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.32);
+    color: #34d399;
+}
+.permission-tool-read,
+.permission-tool-glob,
+.permission-tool-grep,
+.permission-tool-other {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.28);
+    color: #cbd5e1;
+}
+.permission-request-id {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.permission-preview-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.permission-preview-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+}
+.permission-preview {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    background: rgba(2, 6, 23, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: #dbeafe;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 100px;
+}
+@media (max-width: 768px) {
+    .permission-actions {
+        flex-wrap: wrap;
+    }
+    .permission-btn {
+        flex: 1 1 140px;
+    }
+}

@@ -1141,6 +1141,79 @@ def _chosen_permission_label(options: list[dict], key: str) -> str:
     return ""
 
 
+def _structured_permission_options() -> list[dict[str, str]]:
+    return [
+        {"key": "allow", "label": "Approve"},
+        {"key": "deny", "label": "Deny"},
+    ]
+
+
+async def _store_permission_request(
+    *,
+    agent: str,
+    action: str,
+    options: list[dict],
+    raw_block: str = "",
+    source_kind: str = "terminal_parse",
+    request_id: str = "",
+    tool_name: str = "",
+    description: str = "",
+    input_preview: str = "",
+) -> dict:
+    import time as _time
+
+    policy_input = description or action
+    decision = {"decision": "ask_human", "matched_rule": None}
+    if permission_policy:
+        decision = permission_policy.evaluate(policy_input)
+
+    perm_id = str(uuid.uuid4())[:8]
+    perm = {
+        "id": perm_id,
+        "agent": agent,
+        "action": action,
+        "options": options,
+        "raw_block": raw_block,
+        "status": "pending",
+        "key": "",
+        "chosen_label": "",
+        "created_at": _time.time(),
+        "policy_decision": decision["decision"],
+        "matched_rule": decision["matched_rule"],
+        "source_kind": source_kind,
+        "request_id": request_id,
+        "tool_name": tool_name,
+        "description": description,
+        "input_preview": input_preview,
+    }
+
+    if decision["decision"] == "auto_allow":
+        first_key = ""
+        chosen_label = ""
+        if options:
+            first = options[0]
+            first_key = str(first.get("key", "")).strip()
+            chosen_label = _chosen_permission_label(options, first_key) if first_key else ""
+        perm["status"] = "approved"
+        perm["key"] = first_key
+        perm["chosen_label"] = chosen_label
+        pending_permissions[perm_id] = perm
+        await broadcast_permission("response", perm)
+        log.info("Permission %s auto-approved from %s: %s", perm_id, agent, policy_input[:80])
+        return {"id": perm_id, "status": "approved", "key": first_key, "auto": True}
+
+    pending_permissions[perm_id] = perm
+    await broadcast_permission("request", perm)
+    log.info(
+        "Permission request %s from %s: %s (%s)",
+        perm_id,
+        agent,
+        policy_input[:80],
+        decision["decision"],
+    )
+    return {"id": perm_id, "status": "pending"}
+
+
 def _on_registry_change():
     """Called from registry (any thread) when instances register/deregister/claim/rename."""
     # Update router with current agent names (base names + registered instances)
@@ -2193,52 +2266,58 @@ async def create_permission(request: Request):
     if not agent or not action:
         return JSONResponse({"error": "agent and action required"}, status_code=400)
 
-    import time as _time
-    perm_id = str(uuid.uuid4())[:8]
-    decision = {"decision": "ask_human", "matched_rule": None}
-    if permission_policy:
-        decision = permission_policy.evaluate(action)
-    perm = {
-        "id": perm_id,
-        "agent": agent,
-        "action": action,
-        "options": options,
-        "raw_block": raw_block,
-        "status": "pending",
-        "key": "",
-        "chosen_label": "",
-        "created_at": _time.time(),
-        "policy_decision": decision["decision"],
-        "matched_rule": decision["matched_rule"],
-    }
-    if decision["decision"] == "auto_allow":
-        first_key = ""
-        chosen_label = ""
-        if options:
-            first = options[0]
-            first_key = str(first.get("key", "")).strip()
-            chosen_label = _chosen_permission_label(options, first_key) if first_key else ""
-        perm["status"] = "approved"
-        perm["key"] = first_key
-        perm["chosen_label"] = chosen_label
-        pending_permissions[perm_id] = perm
-        await broadcast_permission("response", perm)
-        log.info("Permission %s auto-approved from %s: %s", perm_id, agent, action[:80])
-        return {"id": perm_id, "status": "approved", "key": first_key, "auto": True}
-
-    pending_permissions[perm_id] = perm
-
-    # Broadcast to all connected UIs
-    await broadcast_permission("request", perm)
-
-    log.info(
-        "Permission request %s from %s: %s (%s)",
-        perm_id,
-        agent,
-        action[:80],
-        decision["decision"],
+    return await _store_permission_request(
+        agent=agent,
+        action=action,
+        options=options,
+        raw_block=raw_block,
     )
-    return {"id": perm_id, "status": "pending"}
+
+
+async def create_structured_permission_request(
+    *,
+    agent: str,
+    request_id: str,
+    tool_name: str,
+    description: str,
+    input_preview: str,
+) -> dict:
+    action = description or tool_name or "Permission request"
+    return await _store_permission_request(
+        agent=agent,
+        action=action,
+        options=_structured_permission_options(),
+        source_kind="structured",
+        request_id=request_id,
+        tool_name=tool_name,
+        description=description,
+        input_preview=input_preview,
+    )
+
+
+@app.post("/api/permissions/structured")
+async def create_structured_permission(request: Request):
+    """Structured permission request posted from a transport-specific relay."""
+    body = await request.json()
+    agent = str(body.get("agent", "")).strip() or "claude"
+    request_id = str(body.get("request_id", "")).strip().lower()
+    tool_name = str(body.get("tool_name", "")).strip()
+    description = str(body.get("description", "")).strip()
+    input_preview = str(body.get("input_preview", "")).strip()
+
+    if not request_id or not tool_name or not description:
+        return JSONResponse(
+            {"error": "request_id, tool_name, and description required"},
+            status_code=400,
+        )
+
+    return await create_structured_permission_request(
+        agent=agent,
+        request_id=request_id,
+        tool_name=tool_name,
+        description=description,
+        input_preview=input_preview,
+    )
 
 
 @app.get("/api/permissions/{perm_id}")

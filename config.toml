@@ -79,7 +79,7 @@ upload_dir = "./uploads"
 max_size_mb = 10
 
 [permissions]
-dry_run = true
+dry_run = false
 auto_expire_seconds = 300
 
 auto_allow = [

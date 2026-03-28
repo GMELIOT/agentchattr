@@ -72,6 +72,24 @@ class PermissionPolicy:
         log.info('[policy] ask_human: "%s" matched no rule', action)
         return {"decision": "ask_human", "matched_rule": None}
 
+    def evaluate_many(self, actions: list[str]) -> dict:
+        """Return a combined policy decision across multiple action texts."""
+        normalized = [action.strip() for action in actions if action and action.strip()]
+        if not normalized:
+            return {"decision": "ask_human", "matched_rule": None}
+
+        auto_allow_rule: str | None = None
+        for action in normalized:
+            decision = self.evaluate(action)
+            if decision["decision"] == "always_ask":
+                return decision
+            if decision["decision"] != "auto_allow":
+                return {"decision": "ask_human", "matched_rule": auto_allow_rule}
+            if auto_allow_rule is None:
+                auto_allow_rule = decision["matched_rule"]
+
+        return {"decision": "auto_allow", "matched_rule": auto_allow_rule}
+
     def add_auto_allow(self, pattern: str) -> None:
         """Persist a new auto-allow pattern and activate it immediately."""
         pattern = pattern.strip()

@@ -29,6 +29,8 @@ let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
 let colorOverrides = JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}');
 let schedulesList = [];  // array of schedule objects from server
+let agentStatus = {};  // { agentName: { available, busy, color, ... } }
+let startingAgents = new Set();
 const HISTORY_BATCH_SIZE = 50;
 let historyMessages = [];
 let loadedMessageIds = new Set();
@@ -691,6 +693,7 @@ function connectWebSocket() {
             applyAgentConfig(event.data);
         } else if (event.type === 'base_colors') {
             baseColors = event.data || {};
+            buildStatusPills();
         } else if (event.type === 'todos') {
             todos = {};
             for (const [id, status] of Object.entries(event.data)) {
@@ -1516,7 +1519,18 @@ document.addEventListener('keydown', (e) => {
 function buildStatusPills() {
     const container = document.getElementById('agent-status');
     container.innerHTML = '';
-    for (const [name, cfg] of Object.entries(agentConfig)) {
+    const pillNames = new Set(Object.keys(agentConfig || {}));
+    const registeredBases = new Set(
+        Object.entries(agentConfig || {}).map(([name, cfg]) => (cfg.base || name).toLowerCase())
+    );
+    for (const name of Object.keys(baseColors || {})) {
+        if (!registeredBases.has(name.toLowerCase())) {
+            pillNames.add(name);
+        }
+    }
+    for (const name of pillNames) {
+        const cfg = agentConfig[name] || baseColors[name] || {};
+        const baseName = (cfg.base || name).toLowerCase();
         const pill = document.createElement('div');
         pill.className = 'status-pill';
         if (cfg.state === 'pending') pill.classList.add('pending');
@@ -1524,6 +1538,31 @@ function buildStatusPills() {
         pill.title = `@${name}`;  // Tooltip: canonical name for manual @-typing
         pill.style.setProperty('--agent-color', colorOverrides[name] || cfg.color || '#4ade80');
         pill.innerHTML = `<span class="status-dot"></span><span class="status-label">${escapeHtml(cfg.label || name)}</span>`;
+        const info = agentStatus[name] || { available: false, busy: false, color: cfg.color };
+        applyAgentStatusClasses(pill, info, { preservePending: true });
+        if (startingAgents.has(baseName)) {
+            pill.classList.remove('available', 'working', 'offline');
+            pill.classList.add('pending');
+        }
+        if (!startingAgents.has(baseName) && baseName === name && !info.available && cfg.state !== 'pending') {
+            const startBtn = document.createElement('button');
+            startBtn.type = 'button';
+            startBtn.className = 'status-pill-start-btn';
+            startBtn.textContent = 'Start';
+            startBtn.title = `Start ${cfg.label || name}`;
+            startBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await startAgentFromPill(baseName);
+            });
+            pill.appendChild(startBtn);
+        } else if (startingAgents.has(baseName)) {
+            const startBtn = document.createElement('button');
+            startBtn.type = 'button';
+            startBtn.className = 'status-pill-start-btn starting';
+            startBtn.textContent = 'Starting';
+            startBtn.disabled = true;
+            pill.appendChild(startBtn);
+        }
         // Left-click to toggle pill popover (rename + role + color)
         pill.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2088,12 +2127,34 @@ function applyAgentStatusClasses(el, info, { preservePending = false } = {}) {
     if (info.color) el.style.setProperty('--agent-color', info.color);
 }
 
+async function startAgentFromPill(name) {
+    if (!name || startingAgents.has(name)) return;
+    startingAgents.add(name);
+    buildStatusPills();
+    try {
+        const resp = await fetch(`/api/agents/${encodeURIComponent(name)}/start`, {
+            method: 'POST',
+            headers: { 'X-Session-Token': SESSION_TOKEN },
+        });
+        if (!resp.ok) {
+            const payload = await resp.json().catch(() => ({}));
+            throw new Error(payload.error || `request failed (${resp.status})`);
+        }
+    } catch (err) {
+        console.error('Failed to start agent', name, err);
+        startingAgents.delete(name);
+        buildStatusPills();
+        alert(`Failed to start ${name}: ${err.message}`);
+    }
+}
+
 function updateStatus(data) {
     for (const [name, info] of Object.entries(data)) {
         if (name === 'paused') continue;
-        const pill = document.getElementById(`status-${name}`);
-        if (!pill) continue;
-        applyAgentStatusClasses(pill, info, { preservePending: true });
+        agentStatus[name] = info;
+        if (info.available) {
+            startingAgents.delete(name);
+        }
 
         // Track role (displayed on bubbles, not on pill)
         if (info.role !== undefined) {
@@ -2101,6 +2162,8 @@ function updateStatus(data) {
             _syncBubbleRolePills(name);
         }
     }
+
+    buildStatusPills();
 
     // Mirror status state to mention toggle pills (mobile animation)
     for (const [name, info] of Object.entries(data)) {

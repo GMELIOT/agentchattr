@@ -89,6 +89,8 @@ def get_activity_checker(session_name, trigger_flag=None):
 PERMISSION_PATTERNS = [
     # Claude Code: "Do you want to ..." with numbered options
     (r"Do you want to ([\s\S]+?\?)", "claude"),
+    # Claude Code: MCP tool permission — "Allow ... to run tool ..."
+    (r"Allow .+ to run tool .+\?", "claude"),
     # Codex: "Would you like to ..." (run command, make edits, etc.)
     (r"Would you like to .*\?", "codex"),
     # Gemini: "Action Required" followed by "Apply this change?"

@@ -48,6 +48,9 @@ ws_clients: set[WebSocket] = set()
 permission_policy: PermissionPolicy | None = None
 permission_auto_expire_seconds: int = 300
 permission_hook_secret: str = ""
+_agent_start_lock = threading.Lock()
+_starting_agents: dict[str, float] = {}
+_AGENT_START_GRACE_SECONDS = 30
 
 # --- Permission interceptor: pending approvals ---
 pending_permissions: dict[str, dict] = {}  # uuid -> {agent, action, options, status, key, created_at}
@@ -1266,6 +1269,32 @@ def _tmux_session_exists(session_name: str) -> bool:
     except Exception:
         return False
     return result.returncode == 0
+
+
+def _prune_starting_agents(now: float | None = None) -> None:
+    import time as _time
+
+    cutoff = (now if now is not None else _time.time()) - _AGENT_START_GRACE_SECONDS
+    stale = [base for base, started_at in _starting_agents.items() if started_at < cutoff]
+    for base in stale:
+        _starting_agents.pop(base, None)
+
+
+def _reserve_agent_start(base: str) -> bool:
+    import time as _time
+
+    with _agent_start_lock:
+        now = _time.time()
+        _prune_starting_agents(now)
+        if base in _starting_agents:
+            return False
+        _starting_agents[base] = now
+        return True
+
+
+def _release_agent_start(base: str) -> None:
+    with _agent_start_lock:
+        _starting_agents.pop(base, None)
 
 
 def _start_agent_wrapper(base: str, cfg: dict) -> None:
@@ -2680,6 +2709,7 @@ async def register_agent(request: Request):
     result = registry.register(base, label)
     if result is None:
         return JSONResponse({"error": f"unknown base: {base}"}, status_code=400)
+    _release_agent_start(base)
     # Touch presence so the instance doesn't immediately time out
     import mcp_bridge
     with mcp_bridge._presence_lock:
@@ -2755,17 +2785,22 @@ async def start_agent(name: str):
         return JSONResponse({"error": "unknown agent"}, status_code=404)
     if cfg.get("type") == "api":
         return JSONResponse({"error": "agent is not wrapper-backed"}, status_code=400)
-
-    instances = registry.get_instances_for(base)
-    if instances:
-        return JSONResponse({"error": "already running"}, status_code=409)
-
-    if _tmux_session_exists(f"agentchattr-{base}"):
-        return JSONResponse({"error": "already running"}, status_code=409)
+    if not _reserve_agent_start(base):
+        return JSONResponse({"error": "agent start already in progress"}, status_code=409)
 
     try:
+        instances = registry.get_instances_for(base)
+        if instances:
+            _release_agent_start(base)
+            return JSONResponse({"error": "already running"}, status_code=409)
+
+        if _tmux_session_exists(f"agentchattr-{base}"):
+            _release_agent_start(base)
+            return JSONResponse({"error": "already running"}, status_code=409)
+
         _start_agent_wrapper(base, cfg)
     except Exception as exc:
+        _release_agent_start(base)
         log.exception("Failed to start agent wrapper for %s", base)
         return JSONResponse({"error": f"failed to start agent: {exc}"}, status_code=500)
 

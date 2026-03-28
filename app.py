@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re as _re
 import sys
 import threading
@@ -45,6 +46,7 @@ config: dict = {}
 ws_clients: set[WebSocket] = set()
 permission_policy: PermissionPolicy | None = None
 permission_auto_expire_seconds: int = 300
+permission_hook_secret: str = ""
 
 # --- Permission interceptor: pending approvals ---
 pending_permissions: dict[str, dict] = {}  # uuid -> {agent, action, options, status, key, created_at}
@@ -283,12 +285,9 @@ def _install_security_middleware(token: str, cfg: dict):
                 return await call_next(request)
 
             if path == "/api/hooks/permission-request":
-                client_ip = request.client.host if request.client else ""
-                if client_ip not in ("127.0.0.1", "::1", "localhost"):
-                    return JSONResponse(
-                        {"error": f"forbidden: permission hook is restricted to local loopback. Source {client_ip} is not allowed."},
-                        status_code=403,
-                    )
+                ok, error = _validate_permission_hook_request(request)
+                if not ok:
+                    return JSONResponse({"error": error}, status_code=403)
                 return await call_next(request)
 
             # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
@@ -353,7 +352,7 @@ def _install_login_middleware():
 
 def configure(cfg: dict, session_token: str = ""):
     global store, rules, summaries, jobs, schedules, router, agents, registry, session_store, session_engine, config
-    global login_enabled, login_password_hash, permission_policy, permission_auto_expire_seconds
+    global login_enabled, login_password_hash, permission_policy, permission_auto_expire_seconds, permission_hook_secret
     config = cfg
     # --- Login gate ---
     auth_cfg = cfg.get("auth", {})
@@ -361,6 +360,10 @@ def configure(cfg: dict, session_token: str = ""):
     login_password_hash = auth_cfg.get("password_hash", "")
     permissions_cfg = cfg.get("permissions", {})
     permission_auto_expire_seconds = int(permissions_cfg.get("auto_expire_seconds", 300))
+    permission_hook_secret = str(
+        permissions_cfg.get("hook_secret")
+        or os.environ.get("ISAAC_HOOK_SECRET", "")
+    ).strip()
     permission_policy = PermissionPolicy(
         permissions_cfg.get("auto_allow", []),
         permissions_cfg.get("always_ask", []),
@@ -1164,19 +1167,32 @@ def _truncate_permission_text(value: str, limit: int = 500) -> str:
     return value[: max(limit - 3, 0)].rstrip() + "..."
 
 
-def _build_hook_description(tool_input: object) -> str:
+def _hook_texts(tool_name: str, tool_input: object) -> tuple[str, str, list[str]]:
+    command = ""
+    description = ""
+
     if isinstance(tool_input, dict):
-        for key in ("description", "command"):
-            value = str(tool_input.get(key, "")).strip()
-            if value:
-                return value
+        command = str(tool_input.get("command", "")).strip()
+        description = str(tool_input.get("description", "")).strip()
         try:
-            return _truncate_permission_text(json.dumps(tool_input, sort_keys=True))
+            fallback = _truncate_permission_text(json.dumps(tool_input, sort_keys=True))
         except TypeError:
-            return _truncate_permission_text(str(tool_input))
-    if tool_input is None:
-        return ""
-    return _truncate_permission_text(str(tool_input))
+            fallback = _truncate_permission_text(str(tool_input))
+    elif tool_input is None:
+        fallback = ""
+    else:
+        fallback = _truncate_permission_text(str(tool_input))
+
+    display = command or description or fallback or tool_name
+    policy_inputs: list[str] = []
+    for value in (tool_name, command, description):
+        value = value.strip()
+        if value:
+            policy_inputs.append(value)
+    if fallback and not policy_inputs:
+        policy_inputs.append(fallback)
+
+    return display, _build_hook_input_preview(tool_input), policy_inputs
 
 
 def _build_hook_input_preview(tool_input: object) -> str:
@@ -1202,6 +1218,41 @@ def _hook_permission_response(hook_event_name: str, behavior: str, message: str 
             }
         }
     )
+
+
+def _request_header(request: Request, key: str) -> str:
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return ""
+    return str(headers.get(key, "")).strip()
+
+
+def _request_query_param(request: Request, key: str) -> str:
+    query_params = getattr(request, "query_params", None)
+    if query_params is None:
+        return ""
+    return str(query_params.get(key, "")).strip()
+
+
+def _validate_permission_hook_request(request: Request) -> tuple[bool, str]:
+    client_ip = request.client.host if request.client else ""
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+        return False, (
+            f"forbidden: permission hook is restricted to local loopback. "
+            f"Source {client_ip} is not allowed."
+        )
+
+    expected_secret = permission_hook_secret or session_token
+    provided_secret = (
+        _request_header(request, "x-hook-secret")
+        or _request_query_param(request, "hook_secret")
+        or _request_header(request, "x-session-token")
+        or _request_query_param(request, "token")
+    )
+    if not expected_secret or provided_secret != expected_secret:
+        return False, "forbidden: invalid or missing permission hook secret"
+
+    return True, ""
 
 
 async def _wait_for_permission_resolution(perm_id: str, timeout_seconds: int) -> dict:
@@ -2397,6 +2448,10 @@ async def create_structured_permission(request: Request):
 @app.post("/api/hooks/permission-request")
 async def permission_request_hook(request: Request):
     """Claude PermissionRequest hook relay with blocking allow/deny response."""
+    ok, error = _validate_permission_hook_request(request)
+    if not ok:
+        return JSONResponse({"error": error}, status_code=403)
+
     body = await request.json()
     hook_event_name = str(body.get("hook_event_name", "PermissionRequest")).strip() or "PermissionRequest"
     session_id = str(body.get("session_id", "")).strip()
@@ -2406,12 +2461,11 @@ async def permission_request_hook(request: Request):
     if not tool_name:
         return JSONResponse({"error": "tool_name required"}, status_code=400)
 
-    description = _build_hook_description(tool_input) or tool_name
-    input_preview = _build_hook_input_preview(tool_input)
+    description, input_preview, policy_inputs = _hook_texts(tool_name, tool_input)
 
     decision = {"decision": "ask_human", "matched_rule": None}
     if permission_policy:
-        decision = permission_policy.evaluate(description)
+        decision = permission_policy.evaluate_many(policy_inputs)
 
     if decision["decision"] == "auto_allow":
         log.info("Permission hook auto-allowed for %s: %s", tool_name, description[:80])

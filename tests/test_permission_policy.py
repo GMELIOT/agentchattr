@@ -44,6 +44,29 @@ class PermissionPolicyTests(unittest.TestCase):
         self.assertEqual(decision["decision"], "ask_human")
         self.assertIsNone(decision["matched_rule"])
 
+    def test_evaluate_many_requires_all_inputs_to_be_auto_allow(self):
+        policy = PermissionPolicy(
+            auto_allow=[r"Inspect .+"],
+            always_ask=[],
+            dry_run=False,
+        )
+
+        decision = policy.evaluate_many(["Inspect repo status", "rm -rf node_modules"])
+
+        self.assertEqual(decision["decision"], "ask_human")
+
+    def test_evaluate_many_always_ask_wins_over_auto_allow(self):
+        policy = PermissionPolicy(
+            auto_allow=[r"Inspect .+"],
+            always_ask=[r"rm -rf .+"],
+            dry_run=False,
+        )
+
+        decision = policy.evaluate_many(["Inspect repo status", "rm -rf node_modules"])
+
+        self.assertEqual(decision["decision"], "always_ask")
+        self.assertEqual(decision["matched_rule"], r"rm -rf .+")
+
     def test_dry_run_logs_but_still_asks_human(self):
         policy = PermissionPolicy(
             auto_allow=[r"Read .+"],

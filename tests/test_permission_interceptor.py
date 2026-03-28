@@ -43,6 +43,25 @@ class PermissionPromptDetectionTests(unittest.TestCase):
             ],
         )
 
+    def test_codex_run_command_prompt_uses_inline_key_hints(self):
+        pane = "\n".join([
+            "Would you like to run the following command?",
+            "1. Yes, proceed (y)",
+            "2. No, cancel (esc)",
+        ])
+
+        prompt = wrapper_unix.detect_permission_prompt(pane)
+
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt["agent_hint"], "codex")
+        self.assertEqual(
+            prompt["options"],
+            [
+                {"key": "y", "label": "Yes, proceed (y)"},
+                {"key": "esc", "label": "No, cancel (esc)"},
+            ],
+        )
+
     def test_multiline_claude_action_is_joined_before_options(self):
         pane = "\n".join([
             "Bash command",
@@ -61,6 +80,55 @@ class PermissionPromptDetectionTests(unittest.TestCase):
             prompt["action"].split("\n\n")[0],
             "Do you want to create this multi-line file?",
         )
+        self.assertEqual(
+            prompt["options"],
+            [
+                {"key": "1", "label": "Yes"},
+                {"key": "2", "label": "No"},
+            ],
+        )
+
+    def test_claude_mcp_permission_prompt_is_detected(self):
+        pane = "\n".join([
+            'Allow the agentchattr MCP server to run tool "chat_read"?',
+            "1. Allow once",
+            "2. Allow for session",
+            "3. Deny",
+            "4. Cancel",
+        ])
+
+        prompt = wrapper_unix.detect_permission_prompt(pane)
+
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt["agent_hint"], "claude")
+        self.assertEqual(
+            prompt["action"],
+            'Allow the agentchattr MCP server to run tool "chat_read"?',
+        )
+        self.assertEqual(
+            prompt["options"],
+            [
+                {"key": "1", "label": "Allow once"},
+                {"key": "2", "label": "Allow for session"},
+                {"key": "3", "label": "Deny"},
+                {"key": "4", "label": "Cancel"},
+            ],
+        )
+
+    def test_gemini_action_required_prompt_is_detected(self):
+        pane = "\n".join([
+            "Action Required",
+            "",
+            "Apply this change?",
+            "1. Yes",
+            "2. No",
+        ])
+
+        prompt = wrapper_unix.detect_permission_prompt(pane)
+
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt["agent_hint"], "gemini")
+        self.assertEqual(prompt["action"], "Action Required Apply this change?")
         self.assertEqual(
             prompt["options"],
             [

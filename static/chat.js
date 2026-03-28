@@ -946,10 +946,25 @@ function isStructuredPermission(meta) {
     return Boolean(meta && meta.source_kind === 'structured' && (meta.tool_name || meta.description));
 }
 
+function getPermissionToolClass(toolName) {
+    const normalized = String(toolName || '').trim().toLowerCase();
+    const safeToolClasses = {
+        bash: 'bash',
+        edit: 'edit',
+        write: 'write',
+        read: 'read',
+        glob: 'glob',
+        grep: 'grep',
+    };
+    return safeToolClasses[normalized] || 'other';
+}
+
 function renderPermissionContent(meta, isPending) {
     const options = meta.options || [];
     if (isStructuredPermission(meta)) {
-        const toolName = escapeHtml(meta.tool_name || 'Permission');
+        const rawToolName = String(meta.tool_name || 'Permission');
+        const toolName = escapeHtml(rawToolName);
+        const toolClass = getPermissionToolClass(rawToolName);
         const description = escapeHtml(meta.description || meta.action || '');
         const preview = meta.input_preview ? `
                     <div class="permission-preview-wrap">
@@ -972,7 +987,7 @@ function renderPermissionContent(meta, isPending) {
         return `
                 <div class="permission-structured">
                     <div class="permission-structured-header">
-                        <span class="permission-tool-badge permission-tool-${String(meta.tool_name || '').trim().toLowerCase()}">${toolName}</span>
+                        <span class="permission-tool-badge permission-tool-${toolClass}">${toolName}</span>
                         ${meta.request_id ? `<span class="permission-request-id">${escapeHtml(meta.request_id)}</span>` : ''}
                     </div>
                     <div class="permission-action">${description}</div>

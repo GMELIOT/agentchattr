@@ -264,6 +264,33 @@ header h1 {
     opacity: 0.4;
 }
 
+.status-pill-start-btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0 8px;
+    border: 1px solid color-mix(in srgb, var(--agent-color, #888) 45%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--agent-color, #888) 16%, var(--bg-primary));
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+}
+
+.status-pill-start-btn:hover {
+    background: color-mix(in srgb, var(--agent-color, #888) 24%, var(--bg-primary));
+    border-color: color-mix(in srgb, var(--agent-color, #888) 65%, transparent);
+}
+
+.status-pill-start-btn:disabled,
+.status-pill-start-btn.starting {
+    opacity: 0.7;
+    cursor: wait;
+}
+
 .status-pill.pending {
     border-style: dashed;
     border-color: var(--agent-color, #888);

@@ -24,6 +24,7 @@ from agents import AgentTrigger
 from registry import RuntimeRegistry
 from session_store import SessionStore, validate_session_template
 from session_engine import SessionEngine
+from permission_policy import PermissionPolicy
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ session_store: SessionStore | None = None
 session_engine: SessionEngine | None = None
 config: dict = {}
 ws_clients: set[WebSocket] = set()
+permission_policy: PermissionPolicy | None = None
+permission_auto_expire_seconds: int = 300
 
 # --- Permission interceptor: pending approvals ---
 pending_permissions: dict[str, dict] = {}  # uuid -> {agent, action, options, status, key, created_at}
@@ -341,12 +344,20 @@ def _install_login_middleware():
 
 def configure(cfg: dict, session_token: str = ""):
     global store, rules, summaries, jobs, schedules, router, agents, registry, session_store, session_engine, config
-    global login_enabled, login_password_hash
+    global login_enabled, login_password_hash, permission_policy, permission_auto_expire_seconds
     config = cfg
     # --- Login gate ---
     auth_cfg = cfg.get("auth", {})
     login_enabled = bool(auth_cfg.get("enabled", False))
     login_password_hash = auth_cfg.get("password_hash", "")
+    permissions_cfg = cfg.get("permissions", {})
+    permission_auto_expire_seconds = int(permissions_cfg.get("auto_expire_seconds", 300))
+    permission_policy = PermissionPolicy(
+        permissions_cfg.get("auto_allow", []),
+        permissions_cfg.get("always_ask", []),
+        dry_run=bool(permissions_cfg.get("dry_run", True)),
+        config_path=Path(__file__).parent / "config.toml",
+    )
     _install_login_middleware()
     # --- Security: store the session token and install middleware ---
     _install_security_middleware(session_token, cfg)
@@ -2184,6 +2195,9 @@ async def create_permission(request: Request):
 
     import time as _time
     perm_id = str(uuid.uuid4())[:8]
+    decision = {"decision": "ask_human", "matched_rule": None}
+    if permission_policy:
+        decision = permission_policy.evaluate(action)
     perm = {
         "id": perm_id,
         "agent": agent,
@@ -2194,13 +2208,36 @@ async def create_permission(request: Request):
         "key": "",
         "chosen_label": "",
         "created_at": _time.time(),
+        "policy_decision": decision["decision"],
+        "matched_rule": decision["matched_rule"],
     }
+    if decision["decision"] == "auto_allow":
+        first_key = ""
+        chosen_label = ""
+        if options:
+            first = options[0]
+            first_key = str(first.get("key", "")).strip()
+            chosen_label = _chosen_permission_label(options, first_key) if first_key else ""
+        perm["status"] = "approved"
+        perm["key"] = first_key
+        perm["chosen_label"] = chosen_label
+        pending_permissions[perm_id] = perm
+        await broadcast_permission("response", perm)
+        log.info("Permission %s auto-approved from %s: %s", perm_id, agent, action[:80])
+        return {"id": perm_id, "status": "approved", "key": first_key, "auto": True}
+
     pending_permissions[perm_id] = perm
 
     # Broadcast to all connected UIs
     await broadcast_permission("request", perm)
 
-    log.info("Permission request %s from %s: %s", perm_id, agent, action[:80])
+    log.info(
+        "Permission request %s from %s: %s (%s)",
+        perm_id,
+        agent,
+        action[:80],
+        decision["decision"],
+    )
     return {"id": perm_id, "status": "pending"}
 
 
@@ -2213,7 +2250,7 @@ async def get_permission(perm_id: str):
 
     # Auto-expire after 5 minutes
     import time as _time
-    if _time.time() - perm["created_at"] > 300 and perm["status"] == "pending":
+    if _time.time() - perm["created_at"] > permission_auto_expire_seconds and perm["status"] == "pending":
         perm["status"] = "expired"
         await broadcast_permission("expired", perm)
 
@@ -2259,13 +2296,46 @@ async def list_permissions():
     import time as _time
     # Clean up expired
     expired = [pid for pid, p in pending_permissions.items()
-               if _time.time() - p["created_at"] > 300 and p["status"] == "pending"]
+               if _time.time() - p["created_at"] > permission_auto_expire_seconds and p["status"] == "pending"]
     for pid in expired:
         pending_permissions[pid]["status"] = "expired"
 
     # Return pending only
     pending = [p for p in pending_permissions.values() if p["status"] == "pending"]
     return pending
+
+
+@app.get("/api/permissions/policy")
+async def get_permission_policy():
+    if not permission_policy:
+        return JSONResponse({"error": "permissions policy not configured"}, status_code=500)
+    return JSONResponse(permission_policy.get_rules())
+
+
+@app.post("/api/permissions/policy/add")
+async def add_permission_policy_rule(request: Request):
+    if not permission_policy:
+        return JSONResponse({"error": "permissions policy not configured"}, status_code=500)
+
+    auth_inst = _resolve_authenticated_agent(request)
+    presented_token = _extract_agent_token(request)
+    if presented_token and not auth_inst:
+        return JSONResponse({"error": "invalid bearer token"}, status_code=403)
+
+    body = await request.json()
+    pattern = str(body.get("pattern", "")).strip()
+    if not pattern:
+        return JSONResponse({"error": "pattern required"}, status_code=400)
+
+    try:
+        permission_policy.add_auto_allow(pattern)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    log.info("Permission policy added auto_allow rule: %s", pattern)
+    return JSONResponse({"ok": True, "rules": permission_policy.get_rules()})
 
 
 # --- Rules API ---

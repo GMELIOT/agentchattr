@@ -70,6 +70,17 @@ class TelegramNotifierTests(unittest.TestCase):
 
         self.assertEqual(pattern, r"git\ status\ \-\-short")
 
+    def test_permission_option_key_prefers_deny_semantics_for_deny_action(self):
+        key = app._permission_option_key(
+            [
+                {"key": "1", "label": "Approve"},
+                {"key": "2", "label": "No, cancel"},
+            ],
+            "deny",
+        )
+
+        self.assertEqual(key, "2")
+
 
 class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -130,6 +141,42 @@ class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
             app.telegram_notifier.updated,
             [(99, "approved", r"Rule added: git\ status\ \-\-short")],
         )
+
+    async def test_deny_callback_uses_deny_option_key(self):
+        app.pending_permissions["perm5678"] = {
+            "id": "perm5678",
+            "agent": "claude",
+            "action": "Run dangerous command",
+            "options": [{"key": "1", "label": "Approve"}, {"key": "2", "label": "No, cancel"}],
+            "status": "pending",
+            "key": "",
+            "chosen_label": "",
+            "created_at": 0,
+            "tool_name": "Bash",
+            "description": "Run dangerous command",
+            "telegram_message_id": 77,
+        }
+
+        response = await app.telegram_callback(
+            "cb-secret",
+            FakeRequest(
+                {
+                    "callback_query": {
+                        "id": "cbq2",
+                        "data": "deny:perm5678",
+                        "message": {"message_id": 77},
+                    }
+                }
+            ),
+        )
+
+        self.assertEqual(response["status"], "denied")
+        perm = app.pending_permissions["perm5678"]
+        self.assertEqual(perm["status"], "denied")
+        self.assertEqual(perm["key"], "2")
+        self.assertNotEqual(perm["key"], "1")
+        self.assertEqual(app.telegram_notifier.answered[-1], ("cbq2", "Denied"))
+        self.assertEqual(app.telegram_notifier.updated[-1], (77, "denied", ""))
 
 
 if __name__ == "__main__":

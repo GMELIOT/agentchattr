@@ -1165,6 +1165,36 @@ def _chosen_permission_label(options: list[dict], key: str) -> str:
     return ""
 
 
+def _permission_option_key(options: list[dict], action: str) -> str:
+    action = action.strip().lower()
+    normalized: list[tuple[str, str]] = []
+    for option in options or []:
+        key = str(option.get("key", "")).strip()
+        label = str(option.get("label", "")).strip().lower()
+        if key:
+            normalized.append((key, label))
+
+    if not normalized:
+        return action
+
+    if action == "allow":
+        for key, _ in normalized:
+            if key.lower() in {"allow", "approve", "yes", "y", "1"}:
+                return key
+        return normalized[0][0]
+
+    if action == "deny":
+        deny_terms = ("deny", "denied", "reject", "rejecting", "cancel", "no", "skip")
+        for key, label in normalized:
+            if key.lower() in {"deny", "reject", "cancel", "no", "n", "esc", "2"}:
+                return key
+            if any(term in label for term in deny_terms):
+                return key
+        return normalized[-1][0]
+
+    return normalized[0][0]
+
+
 def _structured_permission_options() -> list[dict[str, str]]:
     return [
         {"key": "allow", "label": "Approve"},
@@ -2776,7 +2806,7 @@ async def telegram_callback(secret: str, request: Request):
             return JSONResponse({"error": str(exc)}, status_code=400)
         perm["auto_allow_pattern"] = pattern
         await asyncio.to_thread(telegram_notifier.answer_callback_query, callback_id, "Approved and rule added")
-        key = str((perm.get("options") or [{"key": "allow"}])[0].get("key", "allow")).strip() or "allow"
+        key = _permission_option_key(perm.get("options", []), "allow")
         _, payload, status_code = await _resolve_permission(
             perm_id,
             key=key,
@@ -2796,7 +2826,7 @@ async def telegram_callback(secret: str, request: Request):
         callback_id,
         "Approved" if action == "allow" else "Denied",
     )
-    key = str((perm.get("options") or [{"key": action}])[0].get("key", action)).strip() or action
+    key = _permission_option_key(perm.get("options", []), action)
     _, payload, status_code = await _resolve_permission(
         perm_id,
         key=key,

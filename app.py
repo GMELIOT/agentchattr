@@ -28,6 +28,7 @@ from registry import RuntimeRegistry
 from session_store import SessionStore, validate_session_template
 from session_engine import SessionEngine
 from permission_policy import PermissionPolicy
+from permission_store import PermissionStore, PermissionStatus, TERMINAL_STATUSES
 from telegram_notify import TelegramNotifier
 
 log = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ session_engine: SessionEngine | None = None
 config: dict = {}
 ws_clients: set[WebSocket] = set()
 permission_policy: PermissionPolicy | None = None
-permission_auto_expire_seconds: int = 300
+permission_store: PermissionStore | None = None
 permission_hook_secret: str = ""
 telegram_notifier: TelegramNotifier | None = None
 telegram_callback_secret: str = ""
@@ -56,8 +57,8 @@ _agent_start_lock = threading.Lock()
 _starting_agents: dict[str, float] = {}
 _AGENT_START_GRACE_SECONDS = 30
 
-# --- Permission interceptor: pending approvals ---
-pending_permissions: dict[str, dict] = {}  # uuid -> {agent, action, options, status, key, created_at}
+# --- Permission interceptor: pending approvals (now backed by PermissionStore) ---
+# Legacy in-memory dict removed — all state lives in permission_store (SQLite)
 
 # --- Security: session token (set by configure()) ---
 session_token: str = ""
@@ -363,14 +364,13 @@ def _install_login_middleware():
 
 def configure(cfg: dict, session_token: str = ""):
     global store, rules, summaries, jobs, schedules, router, agents, registry, session_store, session_engine, config
-    global login_enabled, login_password_hash, permission_policy, permission_auto_expire_seconds, permission_hook_secret
+    global login_enabled, login_password_hash, permission_policy, permission_store, permission_hook_secret
     config = cfg
     # --- Login gate ---
     auth_cfg = cfg.get("auth", {})
     login_enabled = bool(auth_cfg.get("enabled", False))
     login_password_hash = auth_cfg.get("password_hash", "")
     permissions_cfg = cfg.get("permissions", {})
-    permission_auto_expire_seconds = int(permissions_cfg.get("auto_expire_seconds", 300))
     permission_hook_secret = str(
         permissions_cfg.get("hook_secret")
         or os.environ.get("ISAAC_HOOK_SECRET", "")
@@ -388,6 +388,9 @@ def configure(cfg: dict, session_token: str = ""):
 
     data_dir = cfg.get("server", {}).get("data_dir", "./data")
     Path(data_dir).mkdir(parents=True, exist_ok=True)
+
+    # --- Permission store (SQLite, durable) ---
+    permission_store = PermissionStore(db_path=Path(data_dir) / "permissions.db")
 
     log_path = Path(data_dir) / "agentchattr_log.jsonl"
     legacy_log_path = Path(data_dir) / "room_log.jsonl"
@@ -1424,6 +1427,14 @@ async def _send_telegram_permission_request(perm: dict) -> None:
         log.warning("Telegram permission request failed for %s: %s", perm["id"], exc)
         return
     perm["telegram_message_id"] = message_id
+    # Record delivery ack in store
+    if permission_store:
+        import time as _time
+        permission_store.update_field(
+            perm["id"],
+            telegram_message_id=message_id,
+            displayed_at_telegram=_time.time(),
+        )
 
 
 async def _update_telegram_permission_result(perm: dict, detail: str = "") -> None:
@@ -1443,21 +1454,34 @@ async def _update_telegram_permission_result(perm: dict, detail: str = "") -> No
         log.warning("Telegram permission update failed for %s: %s", perm.get("id", ""), exc)
 
 
-async def _wait_for_permission_resolution(perm_id: str, timeout_seconds: int) -> dict:
-    import time as _time
+async def rehydrate_pending_permissions() -> int:
+    """Re-broadcast pending permissions to UI/Telegram on startup.
 
-    deadline = _time.time() + max(timeout_seconds, 0)
+    Returns the count of rehydrated permissions.
+    """
+    if not permission_store:
+        return 0
+    pending = permission_store.get_pending()
+    for perm in pending:
+        await broadcast_permission("request", perm)
+        # Re-send Telegram notification if not already sent
+        if not perm.get("telegram_message_id"):
+            await _send_telegram_permission_request(perm)
+    if pending:
+        log.info("Rehydrated %d pending permission(s) from SQLite", len(pending))
+    return len(pending)
+
+
+async def _wait_for_permission_resolution(perm_id: str) -> dict:
+    """Block until the permission is resolved.  No timeout — pending until
+    explicitly approved, denied, or cancelled."""
     while True:
-        perm = pending_permissions.get(perm_id)
+        if not permission_store:
+            return {"id": perm_id, "status": "cancelled"}
+        perm = permission_store.get(perm_id)
         if not perm:
-            return {"id": perm_id, "status": "expired"}
+            return {"id": perm_id, "status": "cancelled"}
         if perm["status"] != "pending":
-            return perm
-        if _time.time() >= deadline:
-            perm["status"] = "expired"
-            await broadcast_permission("expired", perm)
-            await _update_telegram_permission_result(perm)
-            log.info("Permission %s expired while waiting on hook response", perm_id)
             return perm
         await asyncio.sleep(0.5)
 
@@ -1511,22 +1535,26 @@ async def _store_permission_request(
         perm["status"] = "approved"
         perm["key"] = first_key
         perm["chosen_label"] = chosen_label
-        pending_permissions[perm_id] = perm
+        if permission_store:
+            permission_store.create(perm)
         await broadcast_permission("response", perm)
         log.info("Permission %s auto-approved from %s: %s", perm_id, agent, policy_input[:80])
         return {"id": perm_id, "status": "approved", "key": first_key, "auto": True}
 
-    pending_permissions[perm_id] = perm
+    if permission_store:
+        perm = permission_store.create(perm)
+    # Use perm["id"] — may differ from perm_id if deduped by request_id
+    actual_id = perm["id"]
     await broadcast_permission("request", perm)
     await _send_telegram_permission_request(perm)
     log.info(
         "Permission request %s from %s: %s (%s)",
-        perm_id,
+        actual_id,
         agent,
         policy_input[:80],
         decision["decision"],
     )
-    return {"id": perm_id, "status": "pending"}
+    return {"id": actual_id, "status": "pending"}
 
 
 async def _resolve_permission(
@@ -1535,29 +1563,44 @@ async def _resolve_permission(
     key: str,
     action: str,
     detail: str = "",
+    resolved_via: str = "",
 ) -> tuple[dict | None, dict, int]:
-    perm = pending_permissions.get(perm_id)
-    if not perm:
+    if not permission_store:
+        return None, {"error": "store not initialized"}, 500
+
+    to_status = PermissionStatus.APPROVED if action == "approve" else PermissionStatus.DENIED
+    chosen_label = ""
+
+    # Look up the permission first to compute chosen_label
+    perm = permission_store.get(perm_id)
+    if perm:
+        chosen_label = _chosen_permission_label(perm.get("options", []), key)
+
+    updated, error = permission_store.transition(
+        perm_id,
+        to_status,
+        key=key,
+        chosen_label=chosen_label,
+        resolved_by="user",
+        resolved_via=resolved_via,
+    )
+    if error == "not found":
         return None, {"error": "not found"}, 404
-    if perm["status"] != "pending":
-        return perm, {"error": f"already {perm['status']}"}, 409
+    if error:
+        return updated, {"error": error}, 409
 
-    perm["status"] = "approved" if action == "approve" else "denied"
-    perm["key"] = key
-    chosen_label = _chosen_permission_label(perm.get("options", []), key)
-    perm["chosen_label"] = chosen_label
-
-    await broadcast_permission("response", perm)
-    await _update_telegram_permission_result(perm, detail)
+    await broadcast_permission("response", updated)
+    await _update_telegram_permission_result(updated, detail)
 
     log.info(
-        "Permission %s %s: key=%s label=%s",
+        "Permission %s %s: key=%s label=%s via=%s",
         perm_id,
-        perm["status"],
+        updated["status"],
         key,
         chosen_label,
+        resolved_via or "unknown",
     )
-    return perm, {"ok": True, "status": perm["status"]}, 200
+    return updated, {"ok": True, "status": updated["status"]}, 200
 
 
 def _on_registry_change():
@@ -2702,50 +2745,37 @@ async def permission_request_hook(request: Request):
     if created.get("status") != "pending":
         return _hook_permission_response(hook_event_name, "allow")
 
-    resolved = await _wait_for_permission_resolution(
-        created["id"],
-        permission_auto_expire_seconds,
-    )
+    resolved = await _wait_for_permission_resolution(created["id"])
     if resolved["status"] == "approved":
         return _hook_permission_response(hook_event_name, "allow")
     if resolved["status"] == "denied":
         return _hook_permission_response(hook_event_name, "deny", "Denied by user")
-    return _hook_permission_response(hook_event_name, "deny", "Permission request timed out")
+    return _hook_permission_response(hook_event_name, "deny", "Permission cancelled")
 
 
 @app.get("/api/permissions/{perm_id}")
 async def get_permission(perm_id: str):
     """Wrapper polls this to check if the user responded."""
-    perm = pending_permissions.get(perm_id)
+    if not permission_store:
+        return JSONResponse({"error": "store not initialized"}, status_code=500)
+    perm = permission_store.get(perm_id)
     if not perm:
         return JSONResponse({"error": "not found"}, status_code=404)
-
-    # Auto-expire after 5 minutes
-    import time as _time
-    if _time.time() - perm["created_at"] > permission_auto_expire_seconds and perm["status"] == "pending":
-        perm["status"] = "expired"
-        await broadcast_permission("expired", perm)
-        await _update_telegram_permission_result(perm)
-
     return perm
 
 
 @app.post("/api/permissions/{perm_id}/respond")
 async def respond_permission(perm_id: str, request: Request):
     """UI posts the user's approval/denial."""
-    perm = pending_permissions.get(perm_id)
-    if not perm:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    if perm["status"] != "pending":
-        return JSONResponse({"error": f"already {perm['status']}"}, status_code=409)
-
     body = await request.json()
     key = body.get("key", "").strip()
     action = body.get("action", "approve")  # "approve" or "deny"
 
     if not key:
         return JSONResponse({"error": "key required"}, status_code=400)
-    _, payload, status_code = await _resolve_permission(perm_id, key=key, action=action)
+    _, payload, status_code = await _resolve_permission(
+        perm_id, key=key, action=action, resolved_via="ui",
+    )
     if status_code != 200:
         return JSONResponse(payload, status_code=status_code)
     return payload
@@ -2775,7 +2805,7 @@ async def telegram_callback(secret: str, request: Request):
 
     action = parsed["action"]
     perm_id = parsed["perm_id"]
-    perm = pending_permissions.get(perm_id)
+    perm = permission_store.get(perm_id) if permission_store else None
     if not perm:
         await asyncio.to_thread(telegram_notifier.answer_callback_query, callback_id, "Permission not found")
         return {"ok": True, "status": "missing"}
@@ -2789,7 +2819,8 @@ async def telegram_callback(secret: str, request: Request):
         return {"ok": True, "status": perm["status"]}
 
     if message.get("message_id") and not perm.get("telegram_message_id"):
-        perm["telegram_message_id"] = int(message["message_id"])
+        if permission_store:
+            permission_store.update_field(perm_id, telegram_message_id=int(message["message_id"]))
 
     if action == "always":
         pattern = _permission_pattern_for_auto_allow(perm)
@@ -2804,7 +2835,8 @@ async def telegram_callback(secret: str, request: Request):
         except Exception as exc:
             await asyncio.to_thread(telegram_notifier.answer_callback_query, callback_id, "Rule add failed")
             return JSONResponse({"error": str(exc)}, status_code=400)
-        perm["auto_allow_pattern"] = pattern
+        if permission_store:
+            permission_store.update_field(perm_id, auto_allow_pattern=pattern)
         await asyncio.to_thread(telegram_notifier.answer_callback_query, callback_id, "Approved and rule added")
         key = _permission_option_key(perm.get("options", []), "allow")
         _, payload, status_code = await _resolve_permission(
@@ -2812,6 +2844,7 @@ async def telegram_callback(secret: str, request: Request):
             key=key,
             action="approve",
             detail=f"Rule added: {pattern}",
+            resolved_via="telegram",
         )
         if status_code != 200:
             return JSONResponse(payload, status_code=status_code)
@@ -2831,6 +2864,7 @@ async def telegram_callback(secret: str, request: Request):
         perm_id,
         key=key,
         action="approve" if action == "allow" else "deny",
+        resolved_via="telegram",
     )
     if status_code != 200:
         return JSONResponse(payload, status_code=status_code)
@@ -2840,16 +2874,15 @@ async def telegram_callback(secret: str, request: Request):
 @app.get("/api/permissions")
 async def list_permissions():
     """List all pending permissions (for UI to render on page load)."""
+    if not permission_store:
+        return []
+    pending = permission_store.get_pending()
+    # Record UI delivery ack for any permission not yet displayed in UI
     import time as _time
-    # Clean up expired
-    expired = [pid for pid, p in pending_permissions.items()
-               if _time.time() - p["created_at"] > permission_auto_expire_seconds and p["status"] == "pending"]
-    for pid in expired:
-        pending_permissions[pid]["status"] = "expired"
-        await _update_telegram_permission_result(pending_permissions[pid])
-
-    # Return pending only
-    pending = [p for p in pending_permissions.values() if p["status"] == "pending"]
+    now = _time.time()
+    for perm in pending:
+        if not perm.get("displayed_at_ui"):
+            permission_store.update_field(perm["id"], displayed_at_ui=now)
     return pending
 
 
@@ -2884,6 +2917,80 @@ async def add_permission_policy_rule(request: Request):
 
     log.info("Permission policy added auto_allow rule: %s", pattern)
     return JSONResponse({"ok": True, "rules": permission_policy.get_rules()})
+
+
+@app.post("/api/permissions/{perm_id}/ack")
+async def ack_permission_delivery(perm_id: str, request: Request):
+    """Record that a channel has displayed the permission prompt."""
+    if not permission_store:
+        return JSONResponse({"error": "store not initialized"}, status_code=500)
+    body = await request.json()
+    channel = str(body.get("channel", "")).strip().lower()
+    valid_channels = {"ui", "telegram", "terminal"}
+    if channel not in valid_channels:
+        return JSONResponse(
+            {"error": f"channel must be one of: {', '.join(sorted(valid_channels))}"},
+            status_code=400,
+        )
+    perm = permission_store.get(perm_id)
+    if not perm:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    field = f"displayed_at_{channel}"
+    if not perm.get(field):
+        import time as _time
+        permission_store.update_field(perm_id, **{field: _time.time()})
+    return {"ok": True}
+
+
+@app.get("/api/permissions/stats")
+async def permission_reconciliation_stats():
+    """Reconciliation stats: delivery coverage across channels."""
+    if not permission_store:
+        return JSONResponse({"error": "store not initialized"}, status_code=500)
+    recent = permission_store.get_recent(limit=200)
+
+    channels = ("displayed_at_ui", "displayed_at_telegram", "displayed_at_terminal")
+    total = len(recent)
+    by_count = {0: 0, 1: 0, 2: 0, 3: 0}
+    per_channel = {c: 0 for c in channels}
+    pending_count = 0
+    delivery_failures = []
+
+    import time as _time
+    now = _time.time()
+    for perm in recent:
+        delivered = sum(1 for c in channels if perm.get(c))
+        by_count[delivered] += 1
+        for c in channels:
+            if perm.get(c):
+                per_channel[c] += 1
+        if perm["status"] == "pending":
+            pending_count += 1
+        # Flag permissions older than 5 seconds with missing channel acks
+        age = now - perm.get("created_at", now)
+        if age > 5 and delivered < 3 and perm["status"] == "pending":
+            missing = [c.replace("displayed_at_", "") for c in channels if not perm.get(c)]
+            delivery_failures.append({
+                "id": perm["id"],
+                "age_seconds": round(age, 1),
+                "missing_channels": missing,
+            })
+
+    return {
+        "total": total,
+        "pending": pending_count,
+        "delivered_to_all_3": by_count[3],
+        "delivered_to_2": by_count[2],
+        "delivered_to_1": by_count[1],
+        "delivered_to_0": by_count[0],
+        "per_channel": {
+            "ui": per_channel["displayed_at_ui"],
+            "telegram": per_channel["displayed_at_telegram"],
+            "terminal": per_channel["displayed_at_terminal"],
+        },
+        "delivery_failures": delivery_failures[:20],
+    }
 
 
 # --- Rules API ---

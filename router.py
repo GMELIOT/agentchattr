@@ -1,4 +1,4 @@
-"""Message routing based on @mentions with per-channel loop guard."""
+"""Message routing based on @mentions with per-channel pair-aware loop guard."""
 
 import re
 
@@ -10,16 +10,17 @@ class Router:
         self.default_mention = default_mention
         self.max_hops = max_hops
         self._online_checker = online_checker  # callable() -> set of online agent names
-        # Per-channel state: { channel: { hop_count, paused, guard_emitted } }
+        # Per-channel state: { channel: { pair_count, paused, guard_emitted, last_pair } }
         self._channels: dict[str, dict] = {}
         self._build_pattern()
 
     def _get_ch(self, channel: str) -> dict:
         if channel not in self._channels:
             self._channels[channel] = {
-                "hop_count": 0,
+                "pair_count": 0,
                 "paused": False,
                 "guard_emitted": False,
+                "last_pair": None,  # frozenset of the two agents in the current exchange
             }
         return self._channels[channel]
 
@@ -54,10 +55,11 @@ class Router:
         mentions = self.parse_mentions(text)
 
         if not self._is_agent(sender):
-            # Human message resets hop counter and unpauses
-            ch["hop_count"] = 0
+            # Human message resets state and unpauses
+            ch["pair_count"] = 0
             ch["paused"] = False
             ch["guard_emitted"] = False
+            ch["last_pair"] = None
             if not mentions:
                 if self.default_mention in ("both", "all"):
                     return list(self.agent_names)
@@ -72,19 +74,33 @@ class Router:
             # Only route if explicit @mention
             if not mentions:
                 return []
-            ch["hop_count"] += 1
-            if ch["hop_count"] > self.max_hops:
+            # Filter self-mentions to get actual targets
+            targets = [m for m in mentions if m != sender]
+            if not targets:
+                return []
+            # Build the group for this exchange (sender + all targets)
+            current_group = frozenset({sender.lower()} | {t.lower() for t in targets})
+            if len(current_group) == 2 and current_group == ch["last_pair"]:
+                # Same pair bouncing — increment
+                ch["pair_count"] += 1
+            else:
+                # Multi-target or new pair — reset counter.
+                # Multi-target messages (3+ participants) are coordination,
+                # not ping-pong loops, so they reset rather than accumulate.
+                ch["pair_count"] = 1
+                ch["last_pair"] = current_group if len(current_group) == 2 else None
+            if ch["pair_count"] > self.max_hops:
                 ch["paused"] = True
                 return []
-            # Don't route back to self
-            return [m for m in mentions if m != sender]
+            return targets
 
     def continue_routing(self, channel: str = "general"):
         """Resume after loop guard pause."""
         ch = self._get_ch(channel)
-        ch["hop_count"] = 0
+        ch["pair_count"] = 0
         ch["paused"] = False
         ch["guard_emitted"] = False
+        ch["last_pair"] = None
 
     def is_paused(self, channel: str = "general") -> bool:
         return self._get_ch(channel)["paused"]

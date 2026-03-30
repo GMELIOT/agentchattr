@@ -779,10 +779,25 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                 time.sleep(poll_interval)
                 continue
 
-            # Poll for response
-            poll_start = time.time()
-            timeout_secs = 300  # 5 minute timeout
-            while time.time() - poll_start < timeout_secs:
+            # Ack terminal delivery
+            try:
+                ack_payload = json.dumps({"channel": "terminal"}).encode()
+                ack_headers = {"Content-Type": "application/json"}
+                if _token:
+                    ack_headers["Authorization"] = f"Bearer {_token}"
+                ack_req = urllib.request.Request(
+                    f"http://127.0.0.1:{server_port}/api/permissions/{perm_id}/ack",
+                    method="POST",
+                    data=ack_payload,
+                    headers=ack_headers,
+                )
+                urllib.request.urlopen(ack_req, timeout=3)
+            except Exception:
+                pass  # Best-effort ack
+
+            # Poll for response — no timeout, permissions stay pending
+            # until explicitly resolved or cancelled
+            while True:
                 time.sleep(1)
 
                 try:
@@ -821,8 +836,8 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                         inject_keystroke(session_name, deny_key)
                         print(f"  [permission] Denied: {prompt['action'][:60]}")
                         break
-                    elif status == "expired":
-                        print(f"  [permission] Expired: {prompt['action'][:60]}")
+                    elif status in ("cancelled", "superseded"):
+                        print(f"  [permission] {status.title()}: {prompt['action'][:60]}")
                         break
                     # else: still pending, keep polling
                 except urllib.error.HTTPError as exc:

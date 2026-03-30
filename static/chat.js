@@ -718,6 +718,12 @@ function connectWebSocket() {
                     metadata: d,
                     channel: activeChannel
                 });
+                // Ack UI delivery for reconciliation tracking
+                fetch(`/api/permissions/${encodeURIComponent(d.id)}/ack`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
+                    body: JSON.stringify({ channel: 'ui' }),
+                }).catch(() => {});
             } else if (event.action === 'response' || event.action === 'expired') {
                 const el = document.querySelector(`.message[data-id="${d.id}"]`);
                 if (el) {
@@ -1550,6 +1556,17 @@ function buildStatusPills() {
             startBtn.className = 'status-pill-start-btn';
             startBtn.textContent = 'Start';
             startBtn.title = `Start ${cfg.label || name}`;
+            startBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await startAgentFromPill(baseName);
+            });
+            pill.appendChild(startBtn);
+        } else if (!startingAgents.has(baseName) && baseName === name && info.available && cfg.state !== 'pending') {
+            const startBtn = document.createElement('button');
+            startBtn.type = 'button';
+            startBtn.className = 'status-pill-start-btn start-another';
+            startBtn.textContent = '+';
+            startBtn.title = `Start another ${cfg.label || name} instance`;
             startBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 await startAgentFromPill(baseName);

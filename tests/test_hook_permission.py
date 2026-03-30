@@ -242,5 +242,105 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
         await task
 
 
+    async def test_concurrent_ui_and_telegram_resolution_first_writer_wins(self):
+        """Concurrent approvals from UI and Telegram: first writer wins, second is harmless."""
+        # Create a pending permission via the hook (non-blocking — we'll resolve it)
+        task = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-concurrent",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo concurrent"},
+                    }
+                )
+            )
+        )
+
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        perm_id = pending[0]["id"]
+
+        # Simulate concurrent resolution: UI approves, Telegram denies at ~same time
+        # Since _resolve_permission uses SQLite with locking, one will win
+        ui_result = asyncio.create_task(
+            app.respond_permission(
+                perm_id,
+                FakeRequest({"key": "allow", "action": "approve"}),
+            )
+        )
+        telegram_result = asyncio.create_task(
+            app.respond_permission(
+                perm_id,
+                FakeRequest({"key": "deny", "action": "deny"}),
+            )
+        )
+
+        results = await asyncio.gather(ui_result, telegram_result)
+
+        # Exactly one should succeed (200), the other should get 409
+        status_codes = []
+        for r in results:
+            if hasattr(r, 'status_code'):
+                status_codes.append(r.status_code)
+            elif isinstance(r, dict) and "ok" in r:
+                status_codes.append(200)
+            else:
+                status_codes.append(getattr(r, 'status_code', None))
+
+        self.assertIn(200, status_codes)
+        self.assertIn(409, status_codes)
+
+        # The permission should be in a terminal state
+        perm = app.permission_store.get(perm_id)
+        self.assertIn(perm["status"], ("approved", "denied"))
+
+        # resolved_via should be set
+        self.assertIn(perm["resolved_via"], ("ui",))  # both go through respond_permission → "ui"
+
+        # Clean up the hook task
+        response = await task
+        payload = json.loads(response.body)
+        # The hook should have gotten a response (allow or deny depending on who won)
+        self.assertIn(
+            payload["hookSpecificOutput"]["decision"]["behavior"],
+            ("allow", "deny"),
+        )
+
+    async def test_cancel_all_pending_resolves_blocked_hook(self):
+        """cancel_all_pending transitions permissions to cancelled, unblocking waiting hooks."""
+        task = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-cancel",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo cancel-test"},
+                    }
+                )
+            )
+        )
+
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+
+        # Cancel all pending
+        count = app.permission_store.cancel_all_pending()
+        self.assertEqual(count, 1)
+
+        response = await task
+        payload = json.loads(response.body)
+        self.assertEqual(payload["hookSpecificOutput"]["decision"]["behavior"], "deny")
+
+        # Verify the permission is cancelled in the store
+        perm = app.permission_store.get(pending[0]["id"])
+        self.assertEqual(perm["status"], "cancelled")
+        self.assertEqual(perm["resolved_by"], "system")
+
+
 if __name__ == "__main__":
     unittest.main()

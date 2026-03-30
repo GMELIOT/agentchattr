@@ -445,6 +445,46 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
         await task1
         await task2
 
+    async def test_different_agents_same_request_id_not_deduped(self):
+        """Two different agents using the same request_id get separate permissions."""
+        store = app.permission_store
+
+        perm1 = store.create({
+            "agent": "claude",
+            "action": "test action",
+            "request_id": "shared-req-id",
+            "source_kind": "structured",
+            "tool_name": "Bash",
+            "description": "test",
+        })
+        perm2 = store.create({
+            "agent": "codex",
+            "action": "test action",
+            "request_id": "shared-req-id",
+            "source_kind": "structured",
+            "tool_name": "Bash",
+            "description": "test",
+        })
+
+        # Different agents → different permissions despite same request_id
+        self.assertNotEqual(perm1["id"], perm2["id"])
+        self.assertEqual(perm1["agent"], "claude")
+        self.assertEqual(perm2["agent"], "codex")
+
+        # Same agent + same request_id → deduped
+        perm3 = store.create({
+            "agent": "claude",
+            "action": "test action",
+            "request_id": "shared-req-id",
+            "source_kind": "structured",
+            "tool_name": "Bash",
+            "description": "test",
+        })
+        self.assertEqual(perm3["id"], perm1["id"])
+
+        # Clean up
+        store.cancel_all_pending()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 import app
 from permission_policy import PermissionPolicy
+from permission_store import PermissionStore
 
 
 class FakeRequest:
@@ -32,11 +34,16 @@ class FakeRequest:
 
 class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        app.pending_permissions.clear()
+        self._tmpdir = tempfile.TemporaryDirectory()
+        db_path = Path(self._tmpdir.name) / "permissions.db"
+        app.permission_store = PermissionStore(db_path=db_path)
         app.permission_policy = None
-        app.permission_auto_expire_seconds = 300
         app.permission_hook_secret = "hook-secret"
         app.session_token = "session-token"
+
+    def tearDown(self):
+        app.permission_store = None
+        self._tmpdir.cleanup()
 
     def _request(self, body: dict, *, secret: str | None = "hook-secret") -> FakeRequest:
         headers = {}
@@ -63,9 +70,9 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
             payload["error"],
             "forbidden: invalid or missing permission hook secret",
         )
-        self.assertEqual(app.pending_permissions, {})
+        self.assertEqual(app.permission_store.get_pending(), [])
 
-    async def test_auto_allow_returns_immediately_without_creating_permission(self):
+    async def test_auto_allow_returns_immediately_without_creating_pending(self):
         app.permission_policy = PermissionPolicy(
             auto_allow=[r"Bash", r"Inspect .+", r"git status"],
             always_ask=[],
@@ -88,33 +95,7 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
 
         payload = json.loads(response.body)
         self.assertEqual(payload["hookSpecificOutput"]["decision"]["behavior"], "allow")
-        self.assertEqual(app.pending_permissions, {})
-
-    async def test_ask_human_times_out_and_returns_deny(self):
-        app.permission_auto_expire_seconds = 0
-
-        response = await app.permission_request_hook(
-            self._request(
-                {
-                    "session_id": "sess-2",
-                    "hook_event_name": "PermissionRequest",
-                    "tool_name": "Bash",
-                    "tool_input": {
-                        "command": "rm -rf node_modules",
-                    },
-                }
-            )
-        )
-
-        payload = json.loads(response.body)
-        self.assertEqual(payload["hookSpecificOutput"]["decision"]["behavior"], "deny")
-        self.assertEqual(
-            payload["hookSpecificOutput"]["decision"]["message"],
-            "Permission request timed out",
-        )
-        self.assertEqual(len(app.pending_permissions), 1)
-        perm = next(iter(app.pending_permissions.values()))
-        self.assertEqual(perm["status"], "expired")
+        self.assertEqual(app.permission_store.get_pending(), [])
 
     async def test_user_response_unblocks_hook_and_returns_allow(self):
         task = asyncio.create_task(
@@ -133,9 +114,10 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        await asyncio.sleep(0.05)
-        self.assertEqual(len(app.pending_permissions), 1)
-        perm_id, perm = next(iter(app.pending_permissions.items()))
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        perm = pending[0]
         self.assertEqual(perm["status"], "pending")
         self.assertEqual(perm["description"], "rm -rf node_modules")
         self.assertEqual(
@@ -144,42 +126,120 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
         )
 
         await app.respond_permission(
-            perm_id,
+            perm["id"],
             FakeRequest({"key": "allow", "action": "approve"}),
         )
         response = await task
 
         payload = json.loads(response.body)
         self.assertEqual(payload["hookSpecificOutput"]["decision"]["behavior"], "allow")
-        self.assertEqual(app.pending_permissions[perm_id]["status"], "approved")
+        resolved = app.permission_store.get(perm["id"])
+        self.assertEqual(resolved["status"], "approved")
+        self.assertEqual(resolved["resolved_via"], "ui")
 
-    async def test_dangerous_command_overrides_benign_description(self):
+    async def test_dangerous_command_creates_pending_permission(self):
         app.permission_policy = PermissionPolicy(
             auto_allow=[r"Inspect .+"],
             always_ask=[r"rm -rf .+"],
             dry_run=False,
         )
-        app.permission_auto_expire_seconds = 0
 
-        response = await app.permission_request_hook(
-            self._request(
-                {
-                    "session_id": "sess-4",
-                    "hook_event_name": "PermissionRequest",
-                    "tool_name": "Bash",
-                    "tool_input": {
-                        "description": "Inspect repo status",
-                        "command": "rm -rf node_modules",
-                    },
-                }
+        # Start the hook (it will block waiting for resolution)
+        task = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-4",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {
+                            "description": "Inspect repo status",
+                            "command": "rm -rf node_modules",
+                        },
+                    }
+                )
             )
         )
 
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        perm = pending[0]
+        self.assertEqual(perm["description"], "rm -rf node_modules")
+
+        # Cancel to unblock the task
+        app.permission_store.cancel_all_pending()
+        response = await task
         payload = json.loads(response.body)
         self.assertEqual(payload["hookSpecificOutput"]["decision"]["behavior"], "deny")
-        self.assertEqual(len(app.pending_permissions), 1)
-        perm = next(iter(app.pending_permissions.values()))
-        self.assertEqual(perm["description"], "rm -rf node_modules")
+
+    async def test_duplicate_resolve_returns_conflict(self):
+        """First-writer-wins: second resolve attempt returns 409."""
+        task = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-5",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo hello"},
+                    }
+                )
+            )
+        )
+
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        perm_id = pending[0]["id"]
+
+        # First resolve succeeds
+        await app.respond_permission(
+            perm_id,
+            FakeRequest({"key": "allow", "action": "approve"}),
+        )
+        response = await task
+
+        # Second resolve returns 409
+        result = await app.respond_permission(
+            perm_id,
+            FakeRequest({"key": "deny", "action": "deny"}),
+        )
+        self.assertEqual(result.status_code, 409)
+
+    async def test_persistence_survives_store_recreation(self):
+        """Permissions persist in SQLite and survive store recreation (simulating restart)."""
+        task = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-6",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "ls"},
+                    }
+                )
+            )
+        )
+
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        perm_id = pending[0]["id"]
+
+        # Recreate the store (simulates server restart)
+        db_path = app.permission_store._db_path
+        app.permission_store = PermissionStore(db_path=db_path)
+
+        # Permission should still be there
+        rehydrated = app.permission_store.get_pending()
+        self.assertEqual(len(rehydrated), 1)
+        self.assertEqual(rehydrated[0]["id"], perm_id)
+        self.assertEqual(rehydrated[0]["status"], "pending")
+
+        # Cancel to clean up the blocking task
+        app.permission_store.cancel_all_pending()
+        await task
 
 
 if __name__ == "__main__":

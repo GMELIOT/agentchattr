@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,7 @@ if str(ROOT) not in sys.path:
 
 import app
 from permission_policy import PermissionPolicy
+from permission_store import PermissionStore
 from telegram_notify import TelegramNotifier
 
 
@@ -84,10 +86,13 @@ class TelegramNotifierTests(unittest.TestCase):
 
 class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        db_path = Path(self._tmpdir.name) / "permissions.db"
+        self.original_store = app.permission_store
         self.original_notifier = app.telegram_notifier
         self.original_secret = app.telegram_callback_secret
         self.original_policy = app.permission_policy
-        app.pending_permissions.clear()
+        app.permission_store = PermissionStore(db_path=db_path)
         app.telegram_notifier = FakeTelegramNotifier()
         app.telegram_callback_secret = "cb-secret"
         app.permission_policy = PermissionPolicy(
@@ -98,25 +103,42 @@ class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def tearDown(self):
+        app.permission_store = self.original_store
         app.telegram_notifier = self.original_notifier
         app.telegram_callback_secret = self.original_secret
         app.permission_policy = self.original_policy
-        app.pending_permissions.clear()
+        self._tmpdir.cleanup()
 
-    async def test_always_callback_approves_permission_and_adds_rule(self):
-        app.pending_permissions["perm1234"] = {
-            "id": "perm1234",
+    def _seed_permission(self, perm_id: str, **overrides) -> dict:
+        """Insert a permission into the store for testing."""
+        perm = {
+            "id": perm_id,
             "agent": "claude",
-            "action": "git status --short",
-            "options": [{"key": "allow", "label": "Approve"}, {"key": "deny", "label": "Deny"}],
+            "action": overrides.get("action", "test action"),
+            "options": overrides.get("options", [
+                {"key": "allow", "label": "Approve"},
+                {"key": "deny", "label": "Deny"},
+            ]),
             "status": "pending",
             "key": "",
             "chosen_label": "",
             "created_at": 0,
-            "tool_name": "Bash",
-            "description": "git status --short",
-            "telegram_message_id": 99,
+            "tool_name": overrides.get("tool_name", "Bash"),
+            "description": overrides.get("description", "test action"),
+            "source_kind": "structured",
+            **{k: v for k, v in overrides.items()
+               if k not in ("action", "options", "tool_name", "description")},
         }
+        return app.permission_store.create(perm)
+
+    async def test_always_callback_approves_permission_and_adds_rule(self):
+        self._seed_permission(
+            "perm1234",
+            action="git status --short",
+            description="git status --short",
+            tool_name="Bash",
+        )
+        app.permission_store.update_field("perm1234", telegram_message_id=99)
 
         response = await app.telegram_callback(
             "cb-secret",
@@ -132,9 +154,10 @@ class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response["status"], "approved")
-        perm = app.pending_permissions["perm1234"]
+        perm = app.permission_store.get("perm1234")
         self.assertEqual(perm["status"], "approved")
         self.assertEqual(perm["auto_allow_pattern"], r"git\ status\ \-\-short")
+        self.assertEqual(perm["resolved_via"], "telegram")
         self.assertIn(r"git\ status\ \-\-short", app.permission_policy.get_rules()["auto_allow"])
         self.assertEqual(app.telegram_notifier.answered, [("cbq1", "Approved and rule added")])
         self.assertEqual(
@@ -143,19 +166,14 @@ class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_deny_callback_uses_deny_option_key(self):
-        app.pending_permissions["perm5678"] = {
-            "id": "perm5678",
-            "agent": "claude",
-            "action": "Run dangerous command",
-            "options": [{"key": "1", "label": "Approve"}, {"key": "2", "label": "No, cancel"}],
-            "status": "pending",
-            "key": "",
-            "chosen_label": "",
-            "created_at": 0,
-            "tool_name": "Bash",
-            "description": "Run dangerous command",
-            "telegram_message_id": 77,
-        }
+        self._seed_permission(
+            "perm5678",
+            action="Run dangerous command",
+            description="Run dangerous command",
+            tool_name="Bash",
+            options=[{"key": "1", "label": "Approve"}, {"key": "2", "label": "No, cancel"}],
+        )
+        app.permission_store.update_field("perm5678", telegram_message_id=77)
 
         response = await app.telegram_callback(
             "cb-secret",
@@ -171,10 +189,11 @@ class TelegramCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response["status"], "denied")
-        perm = app.pending_permissions["perm5678"]
+        perm = app.permission_store.get("perm5678")
         self.assertEqual(perm["status"], "denied")
         self.assertEqual(perm["key"], "2")
         self.assertNotEqual(perm["key"], "1")
+        self.assertEqual(perm["resolved_via"], "telegram")
         self.assertEqual(app.telegram_notifier.answered[-1], ("cbq2", "Denied"))
         self.assertEqual(app.telegram_notifier.updated[-1], (77, "denied", ""))
 

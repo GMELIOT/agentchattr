@@ -168,3 +168,73 @@ class TestEdgeCases:
         assert r.get_targets("claude", "@codex msg", "ops") == ["codex"]
         assert r.get_targets("codex", "@claude msg", "ops") == []
         assert r.is_paused("ops")
+
+
+class TestMultiTargetMessages:
+    """Multi-target messages (@all, @both, multiple mentions) must not
+    break loop detection or allow guard evasion."""
+
+    def test_at_all_resets_pair_counter(self, router):
+        """@all addresses 3+ agents — that's coordination, not a loop.
+        It should reset the pair counter so a prior pair doesn't accumulate."""
+        ch = "ops"
+        # Build up 3 hops on claude<->codex
+        router.get_targets("claude", "@codex msg", ch)
+        router.get_targets("codex", "@claude msg", ch)
+        router.get_targets("claude", "@codex msg", ch)
+        # Now an @all — multi-target, resets counter
+        router.get_targets("claude", "@all status check", ch)
+        # claude<->codex pair starts fresh
+        for _ in range(4):
+            assert router.get_targets("claude", "@codex msg", ch) != []
+        assert not router.is_paused(ch)
+
+    def test_at_both_resets_pair_counter(self, router):
+        """@both is equivalent to @all for loop guard purposes."""
+        ch = "ops"
+        router.get_targets("claude", "@codex msg", ch)
+        router.get_targets("codex", "@claude msg", ch)
+        router.get_targets("claude", "@codex msg", ch)
+        router.get_targets("codex", "@both update", ch)
+        # Counter reset — no pause after 4 more same-pair hops
+        for _ in range(4):
+            router.get_targets("claude", "@codex msg", ch)
+        assert not router.is_paused(ch)
+
+    def test_multi_mention_resets_pair_counter(self, router):
+        """Mentioning two different agents in one message is multi-target."""
+        ch = "ops"
+        router.get_targets("claude", "@codex msg", ch)
+        router.get_targets("codex", "@claude msg", ch)
+        router.get_targets("claude", "@codex msg", ch)
+        # claude mentions both codex and gemini — 3 participants
+        router.get_targets("claude", "@codex @gemini do tasks", ch)
+        # Counter reset
+        for _ in range(4):
+            router.get_targets("claude", "@codex msg", ch)
+        assert not router.is_paused(ch)
+
+    def test_multi_target_cannot_evade_guard(self, router):
+        """An agent can't dodge the guard by adding extra mentions.
+        If the same pair keeps bouncing with occasional multi-target
+        resets, the pair counter restarts but the guard still works."""
+        ch = "ops"
+        # First round: 4 hops on claude<->codex
+        for _ in range(4):
+            router.get_targets("claude", "@codex msg", ch)
+        assert not router.is_paused(ch)
+        # Multi-target resets
+        router.get_targets("claude", "@codex @gemini check", ch)
+        # Second round: 5 more same-pair hops — fires
+        for _ in range(5):
+            router.get_targets("claude", "@codex msg", ch)
+        assert router.is_paused(ch)
+
+    def test_at_all_does_not_accumulate_with_pairs(self, router):
+        """@all messages don't count toward any pair's hop total."""
+        ch = "ops"
+        # Alternate between @all and single-target — should never fire
+        for _ in range(20):
+            router.get_targets("claude", "@all update", ch)
+            router.get_targets("codex", "@claude done", ch)
+        assert not router.is_paused(ch)

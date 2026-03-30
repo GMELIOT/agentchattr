@@ -78,15 +78,17 @@ class Router:
             targets = [m for m in mentions if m != sender]
             if not targets:
                 return []
-            # Build the pair for this exchange (sender + primary target)
-            current_pair = frozenset({sender.lower(), targets[0].lower()})
-            if current_pair == ch["last_pair"]:
+            # Build the group for this exchange (sender + all targets)
+            current_group = frozenset({sender.lower()} | {t.lower() for t in targets})
+            if len(current_group) == 2 and current_group == ch["last_pair"]:
                 # Same pair bouncing — increment
                 ch["pair_count"] += 1
             else:
-                # New pair entered — reset counter
+                # Multi-target or new pair — reset counter.
+                # Multi-target messages (3+ participants) are coordination,
+                # not ping-pong loops, so they reset rather than accumulate.
                 ch["pair_count"] = 1
-                ch["last_pair"] = current_pair
+                ch["last_pair"] = current_group if len(current_group) == 2 else None
             if ch["pair_count"] > self.max_hops:
                 ch["paused"] = True
                 return []

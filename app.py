@@ -1543,16 +1543,18 @@ async def _store_permission_request(
 
     if permission_store:
         perm = permission_store.create(perm)
+    # Use perm["id"] — may differ from perm_id if deduped by request_id
+    actual_id = perm["id"]
     await broadcast_permission("request", perm)
     await _send_telegram_permission_request(perm)
     log.info(
         "Permission request %s from %s: %s (%s)",
-        perm_id,
+        actual_id,
         agent,
         policy_input[:80],
         decision["decision"],
     )
-    return {"id": perm_id, "status": "pending"}
+    return {"id": actual_id, "status": "pending"}
 
 
 async def _resolve_permission(

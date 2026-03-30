@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS permissions (
 
 CREATE INDEX IF NOT EXISTS idx_permissions_status ON permissions(status);
 CREATE INDEX IF NOT EXISTS idx_permissions_agent  ON permissions(agent);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_request_id
+    ON permissions(request_id) WHERE request_id != '';
 """
 
 
@@ -162,13 +164,33 @@ class PermissionStore:
     # -- CRUD ----------------------------------------------------------------
 
     def create(self, perm: dict[str, Any]) -> dict[str, Any]:
-        """Insert a new permission record. Returns the stored dict."""
+        """Insert a new permission record. Returns the stored dict.
+
+        If ``request_id`` is non-empty and a pending permission with the same
+        ``request_id`` already exists, the existing record is returned instead
+        of creating a duplicate (idempotent retry / reconnect safety).
+        """
         perm_id = perm.get("id") or str(uuid.uuid4())[:8]
         now = perm.get("created_at") or time.time()
+        request_id = perm.get("request_id", "").strip()
 
         with self._lock:
             conn = self._connect()
             try:
+                # Deduplicate: if a pending permission with the same request_id
+                # exists, return it instead of creating a new row.
+                if request_id:
+                    existing = conn.execute(
+                        "SELECT * FROM permissions WHERE request_id = ? AND status = ?",
+                        (request_id, PermissionStatus.PENDING.value),
+                    ).fetchone()
+                    if existing:
+                        log.info(
+                            "Permission create deduped: request_id=%s → existing id=%s",
+                            request_id, existing["id"],
+                        )
+                        return self._row_to_dict(existing)
+
                 conn.execute(
                     """INSERT INTO permissions (
                         id, agent, action, options, raw_block, status, key,
@@ -196,7 +218,7 @@ class PermissionStore:
                         perm.get("policy_decision", "ask_human"),
                         perm.get("matched_rule"),
                         perm.get("source_kind", "terminal_parse"),
-                        perm.get("request_id", ""),
+                        request_id,
                         perm.get("tool_name", ""),
                         perm.get("description", ""),
                         perm.get("input_preview", ""),
@@ -338,35 +360,30 @@ class PermissionStore:
             finally:
                 conn.close()
 
-    def cancel_all_pending(self, agent: str | None = None) -> int:
+    def cancel_all_pending(self, agent: str | None = None) -> list[dict[str, Any]]:
         """Cancel all pending permissions, optionally filtered by agent.
 
-        Returns the count of cancelled permissions.
+        Routes each cancellation through ``transition()`` so audit fields
+        (resolved_at, resolved_by, resolved_via) are set correctly.
+
+        Returns list of cancelled permission dicts (for broadcast).
         """
-        with self._lock:
-            conn = self._connect()
-            try:
-                now = time.time()
-                if agent:
-                    cursor = conn.execute(
-                        """UPDATE permissions
-                           SET status = ?, resolved_at = ?, resolved_by = 'system'
-                           WHERE status = ? AND agent = ?""",
-                        (PermissionStatus.CANCELLED.value, now,
-                         PermissionStatus.PENDING.value, agent),
-                    )
-                else:
-                    cursor = conn.execute(
-                        """UPDATE permissions
-                           SET status = ?, resolved_at = ?, resolved_by = 'system'
-                           WHERE status = ?""",
-                        (PermissionStatus.CANCELLED.value, now,
-                         PermissionStatus.PENDING.value),
-                    )
-                conn.commit()
-                return cursor.rowcount
-            finally:
-                conn.close()
+        # Collect IDs first, then transition each individually
+        pending = self.get_pending()
+        if agent:
+            pending = [p for p in pending if p.get("agent") == agent]
+
+        cancelled = []
+        for perm in pending:
+            updated, error = self.transition(
+                perm["id"],
+                PermissionStatus.CANCELLED,
+                resolved_by="system",
+                resolved_via="system",
+            )
+            if updated and not error:
+                cancelled.append(updated)
+        return cancelled
 
     def supersede(self, perm_id: str) -> dict[str, Any] | None:
         """Mark a specific permission as superseded."""

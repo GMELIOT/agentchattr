@@ -779,10 +779,9 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                 time.sleep(poll_interval)
                 continue
 
-            # Poll for response
-            poll_start = time.time()
-            timeout_secs = 300  # 5 minute timeout
-            while time.time() - poll_start < timeout_secs:
+            # Poll for response — no timeout, permissions stay pending
+            # until explicitly resolved or cancelled
+            while True:
                 time.sleep(1)
 
                 try:
@@ -821,8 +820,8 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                         inject_keystroke(session_name, deny_key)
                         print(f"  [permission] Denied: {prompt['action'][:60]}")
                         break
-                    elif status == "expired":
-                        print(f"  [permission] Expired: {prompt['action'][:60]}")
+                    elif status in ("cancelled", "superseded"):
+                        print(f"  [permission] {status.title()}: {prompt['action'][:60]}")
                         break
                     # else: still pending, keep polling
                 except urllib.error.HTTPError as exc:

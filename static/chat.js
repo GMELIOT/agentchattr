@@ -718,6 +718,12 @@ function connectWebSocket() {
                     metadata: d,
                     channel: activeChannel
                 });
+                // Ack UI delivery for reconciliation tracking
+                fetch(`/api/permissions/${encodeURIComponent(d.id)}/ack`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
+                    body: JSON.stringify({ channel: 'ui' }),
+                }).catch(() => {});
             } else if (event.action === 'response' || event.action === 'expired') {
                 const el = document.querySelector(`.message[data-id="${d.id}"]`);
                 if (el) {

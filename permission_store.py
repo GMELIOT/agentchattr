@@ -110,8 +110,12 @@ CREATE TABLE IF NOT EXISTS permissions (
 
 CREATE INDEX IF NOT EXISTS idx_permissions_status ON permissions(status);
 CREATE INDEX IF NOT EXISTS idx_permissions_agent  ON permissions(agent);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_request_id
-    ON permissions(request_id) WHERE request_id != '';
+
+-- Migration: drop old overly-broad unique index on request_id alone
+DROP INDEX IF EXISTS idx_permissions_request_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_agent_request_id
+    ON permissions(agent, request_id) WHERE request_id != '';
 """
 
 
@@ -177,12 +181,15 @@ class PermissionStore:
         with self._lock:
             conn = self._connect()
             try:
-                # Deduplicate: if a pending permission with the same request_id
-                # exists, return it instead of creating a new row.
+                # Deduplicate: if a pending permission with the same
+                # (agent, request_id) exists, return it instead of creating
+                # a new row.  Scoped by agent so different agents can reuse
+                # the same local request_id without collision.
+                agent = perm.get("agent", "")
                 if request_id:
                     existing = conn.execute(
-                        "SELECT * FROM permissions WHERE request_id = ? AND status = ?",
-                        (request_id, PermissionStatus.PENDING.value),
+                        "SELECT * FROM permissions WHERE agent = ? AND request_id = ? AND status = ?",
+                        (agent, request_id, PermissionStatus.PENDING.value),
                     ).fetchone()
                     if existing:
                         log.info(

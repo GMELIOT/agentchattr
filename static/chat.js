@@ -1555,6 +1555,17 @@ function buildStatusPills() {
                 await startAgentFromPill(baseName);
             });
             pill.appendChild(startBtn);
+        } else if (!startingAgents.has(baseName) && baseName === name && info.available && cfg.state !== 'pending') {
+            const startBtn = document.createElement('button');
+            startBtn.type = 'button';
+            startBtn.className = 'status-pill-start-btn start-another';
+            startBtn.textContent = '+';
+            startBtn.title = `Start another ${cfg.label || name} instance`;
+            startBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await startAgentFromPill(baseName);
+            });
+            pill.appendChild(startBtn);
         } else if (startingAgents.has(baseName)) {
             const startBtn = document.createElement('button');
             startBtn.type = 'button';

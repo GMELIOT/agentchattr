@@ -779,6 +779,22 @@ def _permission_watcher(get_identity_fn, *, server_port: int = 8300,
                 time.sleep(poll_interval)
                 continue
 
+            # Ack terminal delivery
+            try:
+                ack_payload = json.dumps({"channel": "terminal"}).encode()
+                ack_headers = {"Content-Type": "application/json"}
+                if _token:
+                    ack_headers["Authorization"] = f"Bearer {_token}"
+                ack_req = urllib.request.Request(
+                    f"http://127.0.0.1:{server_port}/api/permissions/{perm_id}/ack",
+                    method="POST",
+                    data=ack_payload,
+                    headers=ack_headers,
+                )
+                urllib.request.urlopen(ack_req, timeout=3)
+            except Exception:
+                pass  # Best-effort ack
+
             # Poll for response — no timeout, permissions stay pending
             # until explicitly resolved or cancelled
             while True:

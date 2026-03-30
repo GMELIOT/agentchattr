@@ -2917,6 +2917,80 @@ async def add_permission_policy_rule(request: Request):
     return JSONResponse({"ok": True, "rules": permission_policy.get_rules()})
 
 
+@app.post("/api/permissions/{perm_id}/ack")
+async def ack_permission_delivery(perm_id: str, request: Request):
+    """Record that a channel has displayed the permission prompt."""
+    if not permission_store:
+        return JSONResponse({"error": "store not initialized"}, status_code=500)
+    body = await request.json()
+    channel = str(body.get("channel", "")).strip().lower()
+    valid_channels = {"ui", "telegram", "terminal"}
+    if channel not in valid_channels:
+        return JSONResponse(
+            {"error": f"channel must be one of: {', '.join(sorted(valid_channels))}"},
+            status_code=400,
+        )
+    perm = permission_store.get(perm_id)
+    if not perm:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    field = f"displayed_at_{channel}"
+    if not perm.get(field):
+        import time as _time
+        permission_store.update_field(perm_id, **{field: _time.time()})
+    return {"ok": True}
+
+
+@app.get("/api/permissions/stats")
+async def permission_reconciliation_stats():
+    """Reconciliation stats: delivery coverage across channels."""
+    if not permission_store:
+        return JSONResponse({"error": "store not initialized"}, status_code=500)
+    recent = permission_store.get_recent(limit=200)
+
+    channels = ("displayed_at_ui", "displayed_at_telegram", "displayed_at_terminal")
+    total = len(recent)
+    by_count = {0: 0, 1: 0, 2: 0, 3: 0}
+    per_channel = {c: 0 for c in channels}
+    pending_count = 0
+    delivery_failures = []
+
+    import time as _time
+    now = _time.time()
+    for perm in recent:
+        delivered = sum(1 for c in channels if perm.get(c))
+        by_count[delivered] += 1
+        for c in channels:
+            if perm.get(c):
+                per_channel[c] += 1
+        if perm["status"] == "pending":
+            pending_count += 1
+        # Flag permissions older than 5 seconds with missing channel acks
+        age = now - perm.get("created_at", now)
+        if age > 5 and delivered < 3 and perm["status"] == "pending":
+            missing = [c.replace("displayed_at_", "") for c in channels if not perm.get(c)]
+            delivery_failures.append({
+                "id": perm["id"],
+                "age_seconds": round(age, 1),
+                "missing_channels": missing,
+            })
+
+    return {
+        "total": total,
+        "pending": pending_count,
+        "delivered_to_all_3": by_count[3],
+        "delivered_to_2": by_count[2],
+        "delivered_to_1": by_count[1],
+        "delivered_to_0": by_count[0],
+        "per_channel": {
+            "ui": per_channel["displayed_at_ui"],
+            "telegram": per_channel["displayed_at_telegram"],
+            "terminal": per_channel["displayed_at_terminal"],
+        },
+        "delivery_failures": delivery_failures[:20],
+    }
+
+
 # --- Rules API ---
 
 @app.get("/api/rules")

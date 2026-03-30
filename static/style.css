@@ -285,6 +285,19 @@ header h1 {
     border-color: color-mix(in srgb, var(--agent-color, #888) 65%, transparent);
 }
 
+.status-pill-start-btn.start-another {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0 6px;
+    font-size: 14px;
+    font-weight: 700;
+    opacity: 0.6;
+}
+
+.status-pill-start-btn.start-another:hover {
+    opacity: 1;
+}
+
 .status-pill-start-btn:disabled,
 .status-pill-start-btn.starting {
     opacity: 0.7;

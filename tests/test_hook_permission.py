@@ -329,17 +329,121 @@ class PermissionHookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pending), 1)
 
         # Cancel all pending
-        count = app.permission_store.cancel_all_pending()
-        self.assertEqual(count, 1)
+        cancelled = app.permission_store.cancel_all_pending()
+        self.assertEqual(len(cancelled), 1)
 
         response = await task
         payload = json.loads(response.body)
         self.assertEqual(payload["hookSpecificOutput"]["decision"]["behavior"], "deny")
 
-        # Verify the permission is cancelled in the store
+        # Verify the permission is cancelled in the store with full audit
         perm = app.permission_store.get(pending[0]["id"])
         self.assertEqual(perm["status"], "cancelled")
         self.assertEqual(perm["resolved_by"], "system")
+        self.assertEqual(perm["resolved_via"], "system")
+        self.assertIsNotNone(perm["resolved_at"])
+
+
+    async def test_duplicate_request_id_returns_existing_pending(self):
+        """Retry/reconnect with same request_id returns existing pending permission,
+        not a duplicate row."""
+        # First hook call creates a pending permission
+        task1 = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-dedup",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo dedup"},
+                    }
+                )
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        first_id = pending[0]["id"]
+
+        # Second hook call with the same session_id (simulating retry)
+        task2 = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-dedup",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo dedup"},
+                    }
+                )
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        # Should still be exactly 1 pending permission
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["id"], first_id)
+
+        # Resolve once — should unblock both hooks
+        await app.respond_permission(
+            first_id,
+            FakeRequest({"key": "allow", "action": "approve"}),
+        )
+
+        response1 = await task1
+        response2 = await task2
+        payload1 = json.loads(response1.body)
+        payload2 = json.loads(response2.body)
+        self.assertEqual(payload1["hookSpecificOutput"]["decision"]["behavior"], "allow")
+        self.assertEqual(payload2["hookSpecificOutput"]["decision"]["behavior"], "allow")
+
+    async def test_cancel_all_pending_sets_full_audit_trail(self):
+        """cancel_all_pending routes through transition() so resolved_via and
+        resolved_at are set (not just resolved_by)."""
+        # Create two pending permissions
+        task1 = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-audit-1",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo audit1"},
+                    }
+                )
+            )
+        )
+        task2 = asyncio.create_task(
+            app.permission_request_hook(
+                self._request(
+                    {
+                        "session_id": "sess-audit-2",
+                        "hook_event_name": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "echo audit2"},
+                    }
+                )
+            )
+        )
+        await asyncio.sleep(0.1)
+        pending = app.permission_store.get_pending()
+        self.assertEqual(len(pending), 2)
+
+        cancelled = app.permission_store.cancel_all_pending()
+        self.assertEqual(len(cancelled), 2)
+
+        # Both should have full audit fields
+        for perm in cancelled:
+            self.assertEqual(perm["status"], "cancelled")
+            self.assertEqual(perm["resolved_by"], "system")
+            self.assertEqual(perm["resolved_via"], "system")
+            self.assertIsNotNone(perm["resolved_at"])
+
+        # Clean up tasks
+        await task1
+        await task2
 
 
 if __name__ == "__main__":

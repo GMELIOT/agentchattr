@@ -3368,7 +3368,7 @@ def resurrect_from_log() -> None:
     entries = _read_restart_log()
     for entry in reversed(entries):
         status = entry.get("status", "")
-        if status in ("complete", "failed"):
+        if status in ("complete", "failed", "partial_failed"):
             continue
         # Found a non-terminal entry — resurrect its roster
         restart_id = entry.get("restart_id", "")

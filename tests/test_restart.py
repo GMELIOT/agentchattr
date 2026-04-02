@@ -211,6 +211,17 @@ class ResurrectionReplayTests(unittest.TestCase):
                 app.resurrect_from_log()
         self.assertEqual(self.started, [], "Complete entries must not trigger resurrection")
 
+    def test_partial_failed_entry_not_replayed(self):
+        app._append_restart_log({
+            "restart_id": "pfail1", "status": "partial_failed",
+            "roster": [{"base": "claude", "name": "claude", "session_name": "agentchattr-claude"}],
+            "errors": [{"agent": "gemini", "error": "wrapper crashed"}],
+        })
+        with patch.object(app, '_start_agent_wrapper', side_effect=lambda b, c: self.started.append(b)):
+            with patch.object(app, '_tmux_session_exists', return_value=False):
+                app.resurrect_from_log()
+        self.assertEqual(self.started, [], "partial_failed entries must not trigger resurrection")
+
     def test_failed_entry_not_replayed(self):
         app._append_restart_log({
             "restart_id": "fail1", "status": "failed",

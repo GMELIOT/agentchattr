@@ -81,11 +81,9 @@ max_size_mb = 10
 [permissions]
 dry_run = false
 auto_expire_seconds = 300
-hook_secret = "9919eeb423c653ccc582585c7c600db6"
-telegram_bot_token = "8422700618:AAHbhslvAI9shuRr4GTIYvDFr19FD1dkOak"
-telegram_chat_id = "1538855861"
-telegram_callback_secret = "a7f3b9c2e1d4"
-telegram_webhook_base_url = "https://isaac.kaylon.io"
+# Secrets must be set in config.local.toml (gitignored):
+#   hook_secret, telegram_bot_token, telegram_chat_id,
+#   telegram_callback_secret, telegram_webhook_base_url
 
 [slack_bridge]
 bot_token_env = "SLACK_BOT_TOKEN"

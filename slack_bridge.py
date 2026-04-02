@@ -454,22 +454,9 @@ class SlackBridge:
 # ---------------------------------------------------------------------------
 
 def _load_config() -> dict:
-    """Load config from config.toml (or config.local.toml override)."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
-
-    config_path = Path(__file__).parent / "config.toml"
-    local_path = Path(__file__).parent / "config.local.toml"
-
-    cfg: dict = {}
-    if config_path.exists():
-        cfg = tomllib.loads(config_path.read_text())
-    if local_path.exists():
-        local = tomllib.loads(local_path.read_text())
-        cfg.update(local)
-    return cfg
+    """Load config using the shared config loader (merges config.local.toml)."""
+    from config_loader import load_config
+    return load_config(Path(__file__).parent)
 
 
 def _build_telegram_relay(cfg: dict) -> Callable[[ParsedMessage], None] | None:

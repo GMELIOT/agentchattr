@@ -860,6 +860,8 @@ function connectWebSocket() {
                 const _clearDbgAfter = _clearDbgList ? _clearDbgList.children.length : -1;
                 console.log('CLEAR_DEBUG after clear (next frame), jobs-panel-children=' + _clearDbgAfter);
             });
+        } else if (event.type === 'restart_progress') {
+            if (typeof handleRestartProgress === 'function') handleRestartProgress(event);
         } else if (event.type === 'reload') {
             // Server requests full page reload (e.g. after import)
             location.reload();

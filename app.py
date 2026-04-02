@@ -3384,31 +3384,34 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
 
 
 async def _restore_labels(roster: list[dict], max_wait: int = 30) -> None:
-    """Wait for agents to register, then restore snapshot labels."""
+    """Wait for agents to register, then restore snapshot labels per roster entry."""
     if not registry:
         return
-    # Collect agents whose label differs from the base default
-    pending = {}
+    # Collect per-entry labels that differ from the base default.
+    # Key by (base, slot) to handle multiple instances of the same base.
+    pending: dict[tuple[str, int], str] = {}
     for agent in roster:
         base_cfg = registry.get_base_config(agent["base"])
         default_label = base_cfg.get("label", agent["base"]) if base_cfg else agent["base"]
         if agent["label"] != default_label:
-            pending[agent["base"]] = agent["label"]
+            pending[(agent["base"], agent["slot"])] = agent["label"]
 
     if not pending:
         return
 
-    # Poll for registration, then apply labels
+    # Poll for registration, then apply labels by matching slot
     import time as _time
     deadline = _time.time() + max_wait
     while pending and _time.time() < deadline:
         await asyncio.sleep(2)
-        for base in list(pending):
+        for (base, slot) in list(pending):
             instances = registry.get_instances_for(base)
             for inst in instances:
-                if registry.set_label(inst["name"], pending[base]):
-                    log.info("Restored label '%s' for %s", pending[base], inst["name"])
-                    pending.pop(base, None)
+                if inst.get("slot") == slot:
+                    label = pending[(base, slot)]
+                    if registry.set_label(inst["name"], label):
+                        log.info("Restored label '%s' for %s (slot %d)", label, inst["name"], slot)
+                    pending.pop((base, slot), None)
                     break
 
 

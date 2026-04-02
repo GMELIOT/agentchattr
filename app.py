@@ -3158,58 +3158,74 @@ async def start_agent(name: str):
 # Restart orchestrator
 # ---------------------------------------------------------------------------
 
-_RESTART_LOG_PATH: Path | None = None  # set by configure()
 _RESTART_GRACE_SECONDS = 30
 
 
-def _restart_log_path() -> Path:
-    if _RESTART_LOG_PATH:
-        return _RESTART_LOG_PATH
-    return Path(config.get("server", {}).get("data_dir", "./data")) / "restart_log.jsonl"
+class RestartLog:
+    """Append-only restart log with atomic updates and thread safety."""
+
+    def __init__(self, path: Path | None = None):
+        self._path = path
+        self._lock = threading.Lock()
+
+    @property
+    def path(self) -> Path:
+        if self._path:
+            return self._path
+        return Path(config.get("server", {}).get("data_dir", "./data")) / "restart_log.jsonl"
+
+    @path.setter
+    def path(self, value: Path) -> None:
+        self._path = value
+
+    def read(self) -> list[dict]:
+        with self._lock:
+            p = self.path
+            if not p.exists():
+                return []
+            entries: list[dict] = []
+            for line in p.read_text("utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+            return entries
+
+    def append(self, entry: dict) -> None:
+        with self._lock:
+            p = self.path
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+
+    def update(self, restart_id: str, updates: dict) -> None:
+        """Atomically update the entry matching restart_id via temp-file swap."""
+        with self._lock:
+            p = self.path
+            if not p.exists():
+                return
+            lines = p.read_text("utf-8").splitlines()
+            new_lines: list[str] = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    new_lines.append(line)
+                    continue
+                if entry.get("restart_id") == restart_id:
+                    entry.update(updates)
+                new_lines.append(json.dumps(entry, separators=(",", ":")))
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            tmp.replace(p)
 
 
-def _read_restart_log() -> list[dict]:
-    path = _restart_log_path()
-    if not path.exists():
-        return []
-    entries: list[dict] = []
-    for line in path.read_text("utf-8").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
-    return entries
-
-
-def _append_restart_log(entry: dict) -> None:
-    path = _restart_log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, separators=(",", ":")) + "\n")
-
-
-def _update_restart_entry(restart_id: str, updates: dict) -> None:
-    """Rewrite the log, updating the entry matching restart_id."""
-    path = _restart_log_path()
-    if not path.exists():
-        return
-    lines = path.read_text("utf-8").splitlines()
-    new_lines: list[str] = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            new_lines.append(line)
-            continue
-        if entry.get("restart_id") == restart_id:
-            entry.update(updates)
-        new_lines.append(json.dumps(entry, separators=(",", ":")))
-    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+restart_log = RestartLog()
 
 
 def _build_roster() -> list[dict]:
@@ -3261,7 +3277,7 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
     # Phase 1: Grace — ask agents to save state
     if scope in ("agents", "everything"):
         await _broadcast_restart_progress(restart_id, "grace", "Asking agents to save state")
-        _update_restart_entry(restart_id, {"status": "grace"})
+        restart_log.update(restart_id, {"status": "grace"})
 
         if not dry_run:
             # Post system message to chat
@@ -3289,12 +3305,12 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
 
             await asyncio.sleep(_RESTART_GRACE_SECONDS)
 
-        _update_restart_entry(restart_id, {"grace_deadline_at": _time.time()})
+        restart_log.update(restart_id, {"grace_deadline_at": _time.time()})
 
     # Phase 2: Kill — terminate agent sessions
     if scope in ("agents", "everything"):
         await _broadcast_restart_progress(restart_id, "killing", "Stopping agent sessions")
-        _update_restart_entry(restart_id, {"status": "killing"})
+        restart_log.update(restart_id, {"status": "killing"})
 
         if not dry_run:
             for agent in roster:
@@ -3307,12 +3323,12 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
                 _kill_agent_session(session_name)
                 log.info("Killed session %s", session_name)
 
-        _update_restart_entry(restart_id, {"killed_at": _time.time()})
+        restart_log.update(restart_id, {"killed_at": _time.time()})
 
     # Phase 3: Server restart (if requested)
     if scope in ("server", "everything"):
         await _broadcast_restart_progress(restart_id, "restarting_server", "Server restarting")
-        _update_restart_entry(restart_id, {
+        restart_log.update(restart_id, {
             "status": "restarting_server",
             "server_restart_started_at": _time.time(),
         })
@@ -3337,7 +3353,7 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
     errors: list[dict] = []
     if scope == "agents":
         await _broadcast_restart_progress(restart_id, "resurrecting", "Starting agents")
-        _update_restart_entry(restart_id, {"status": "resurrecting"})
+        restart_log.update(restart_id, {"status": "resurrecting"})
 
         if not dry_run:
             for agent in roster:
@@ -3356,16 +3372,49 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
         update: dict = {"status": final_status, "resurrected_at": _time.time()}
         if errors:
             update["errors"] = errors
-        _update_restart_entry(restart_id, update)
+        restart_log.update(restart_id, update)
+
+    # Phase 5: Deferred label restore
+    if scope == "agents" and not dry_run and not errors:
+        await _restore_labels(roster)
 
     phase = "complete" if not errors else "partial_failed"
     detail = "Restart finished" if not errors else f"{len(errors)} agent(s) failed to restart"
     await _broadcast_restart_progress(restart_id, phase, detail)
 
 
+async def _restore_labels(roster: list[dict], max_wait: int = 30) -> None:
+    """Wait for agents to register, then restore snapshot labels."""
+    if not registry:
+        return
+    # Collect agents whose label differs from the base default
+    pending = {}
+    for agent in roster:
+        base_cfg = registry.get_base_config(agent["base"])
+        default_label = base_cfg.get("label", agent["base"]) if base_cfg else agent["base"]
+        if agent["label"] != default_label:
+            pending[agent["base"]] = agent["label"]
+
+    if not pending:
+        return
+
+    # Poll for registration, then apply labels
+    import time as _time
+    deadline = _time.time() + max_wait
+    while pending and _time.time() < deadline:
+        await asyncio.sleep(2)
+        for base in list(pending):
+            instances = registry.get_instances_for(base)
+            for inst in instances:
+                if registry.set_label(inst["name"], pending[base]):
+                    log.info("Restored label '%s' for %s", pending[base], inst["name"])
+                    pending.pop(base, None)
+                    break
+
+
 def resurrect_from_log() -> None:
     """Called on server startup to resurrect agents from an incomplete restart."""
-    entries = _read_restart_log()
+    entries = restart_log.read()
     for entry in reversed(entries):
         status = entry.get("status", "")
         if status in ("complete", "failed", "partial_failed"):
@@ -3377,7 +3426,7 @@ def resurrect_from_log() -> None:
         if not roster:
             # Server-only restarts legitimately have empty rosters
             import time as _time
-            _update_restart_entry(restart_id, {
+            restart_log.update(restart_id, {
                 "status": "complete" if scope == "server" else "failed",
                 "resurrected_at": _time.time(),
                 **({"error": "empty roster"} if scope != "server" else {}),
@@ -3403,7 +3452,10 @@ def resurrect_from_log() -> None:
         update: dict = {"status": final_status, "resurrected_at": _time.time()}
         if errors:
             update["errors"] = errors
-        _update_restart_entry(restart_id, update)
+        restart_log.update(restart_id, update)
+        # Schedule deferred label restore (async, runs in background)
+        if not errors and _event_loop:
+            asyncio.run_coroutine_threadsafe(_restore_labels(roster), _event_loop)
         break  # Only process the most recent non-terminal entry
 
 
@@ -3428,7 +3480,7 @@ async def restart_system(request: Request):
     # Reject concurrent non-dry-run restarts
     if not dry_run:
         _terminal = ("complete", "failed", "partial_failed")
-        in_flight = [e for e in _read_restart_log()
+        in_flight = [e for e in restart_log.read()
                      if e.get("status", "") not in _terminal and not e.get("dry_run")]
         if in_flight:
             return JSONResponse({
@@ -3467,12 +3519,12 @@ async def restart_system(request: Request):
         "status": "pending",
         "requested_at": _time.time(),
     }
-    _append_restart_log(entry)
+    restart_log.append(entry)
 
     if dry_run:
         # Execute synchronously for dry run (fast, no side effects)
         await _execute_restart(restart_id, scope, reason, roster, True, initiated_by)
-        _update_restart_entry(restart_id, {"status": "complete"})
+        restart_log.update(restart_id, {"status": "complete"})
         return JSONResponse({"ok": True, "restart_id": restart_id, "dry_run": True, "roster": roster})
 
     # Fire and forget — run restart in background

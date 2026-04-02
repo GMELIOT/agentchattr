@@ -159,7 +159,7 @@ function handleRestartProgress(msg) {
     const labels = {
         grace: 'Waiting for agents to save state...',
         killing: 'Stopping agent sessions...',
-        restarting_server: 'Server restarting -- page will reconnect...',
+        restarting_server: 'Server restarting. Page will reconnect...',
         resurrecting: 'Starting agents back up...',
         complete: 'Restart complete.',
     };

@@ -61,36 +61,36 @@ class RestartLogTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.log_path = Path(self.tmpdir) / "restart_log.jsonl"
-        self._orig_path = app._RESTART_LOG_PATH
-        app._RESTART_LOG_PATH = self.log_path
+        self._orig_path = app.restart_log._path
+        app.restart_log.path = self.log_path
 
     def tearDown(self):
-        app._RESTART_LOG_PATH = self._orig_path
+        app.restart_log._path = self._orig_path
 
     def test_append_and_read(self):
         entry = {"restart_id": "abc123", "status": "pending", "scope": "agents"}
-        app._append_restart_log(entry)
-        entries = app._read_restart_log()
+        app.restart_log.append(entry)
+        entries = app.restart_log.read()
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["restart_id"], "abc123")
         self.assertEqual(entries[0]["status"], "pending")
 
     def test_update_entry(self):
-        app._append_restart_log({"restart_id": "abc", "status": "pending"})
-        app._append_restart_log({"restart_id": "def", "status": "pending"})
-        app._update_restart_entry("abc", {"status": "complete"})
+        app.restart_log.append({"restart_id": "abc", "status": "pending"})
+        app.restart_log.append({"restart_id": "def", "status": "pending"})
+        app.restart_log.update("abc", {"status": "complete"})
 
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(entries[0]["status"], "complete")
         self.assertEqual(entries[1]["status"], "pending")
 
     def test_read_empty_file(self):
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(entries, [])
 
     def test_read_corrupt_lines_skipped(self):
         self.log_path.write_text('{"restart_id":"ok","status":"pending"}\nnot json\n')
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["restart_id"], "ok")
 
@@ -140,11 +140,11 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         self._orig_registry = app.registry
         self._orig_store = app.store
         self._orig_event_loop = app._event_loop
-        self._orig_log_path = app._RESTART_LOG_PATH
+        self._orig_log_path = app.restart_log.path
         self._orig_config = app.config
 
         self.tmpdir = tempfile.mkdtemp()
-        app._RESTART_LOG_PATH = Path(self.tmpdir) / "restart_log.jsonl"
+        app.restart_log.path = Path(self.tmpdir) / "restart_log.jsonl"
         app.registry = _FakeRegistry()
         app.store = _FakeStore()
         app.config = {"server": {"data_dir": self.tmpdir}}
@@ -157,7 +157,7 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         app.registry = self._orig_registry
         app.store = self._orig_store
         app._event_loop = self._orig_event_loop
-        app._RESTART_LOG_PATH = self._orig_log_path
+        app.restart_log.path = self._orig_log_path
         app.config = self._orig_config
         app._broadcast = self._orig_broadcast
 
@@ -176,13 +176,13 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dry_run_writes_log_entry(self):
         roster = app._build_roster()
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "dry3", "status": "pending", "scope": "agents",
             "roster": roster, "dry_run": True,
         })
         await app._execute_restart("dry3", "agents", "test", roster, True, "test-user")
         # Log entry should exist (written by the caller, not by dry run)
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertTrue(len(entries) >= 1)
 
 
@@ -191,18 +191,18 @@ class ResurrectionReplayTests(unittest.TestCase):
 
     def setUp(self):
         self._orig_registry = app.registry
-        self._orig_log_path = app._RESTART_LOG_PATH
+        self._orig_log_path = app.restart_log.path
         self.tmpdir = tempfile.mkdtemp()
-        app._RESTART_LOG_PATH = Path(self.tmpdir) / "restart_log.jsonl"
+        app.restart_log.path = Path(self.tmpdir) / "restart_log.jsonl"
         app.registry = _FakeRegistry()
         self.started: list[str] = []
 
     def tearDown(self):
         app.registry = self._orig_registry
-        app._RESTART_LOG_PATH = self._orig_log_path
+        app.restart_log.path = self._orig_log_path
 
     def test_complete_entry_not_replayed(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "done1", "status": "complete",
             "roster": [{"base": "claude", "name": "claude", "session_name": "agentchattr-claude"}],
         })
@@ -212,7 +212,7 @@ class ResurrectionReplayTests(unittest.TestCase):
         self.assertEqual(self.started, [], "Complete entries must not trigger resurrection")
 
     def test_partial_failed_entry_not_replayed(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "pfail1", "status": "partial_failed",
             "roster": [{"base": "claude", "name": "claude", "session_name": "agentchattr-claude"}],
             "errors": [{"agent": "gemini", "error": "wrapper crashed"}],
@@ -223,7 +223,7 @@ class ResurrectionReplayTests(unittest.TestCase):
         self.assertEqual(self.started, [], "partial_failed entries must not trigger resurrection")
 
     def test_failed_entry_not_replayed(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "fail1", "status": "failed",
             "roster": [{"base": "claude", "name": "claude", "session_name": "agentchattr-claude"}],
         })
@@ -233,7 +233,7 @@ class ResurrectionReplayTests(unittest.TestCase):
         self.assertEqual(self.started, [], "Failed entries must not trigger resurrection")
 
     def test_pending_entry_triggers_resurrection(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "pend1", "status": "killing",
             "roster": [
                 {"base": "claude", "name": "claude", "session_name": "agentchattr-claude"},
@@ -245,11 +245,11 @@ class ResurrectionReplayTests(unittest.TestCase):
                 app.resurrect_from_log()
         self.assertEqual(sorted(self.started), ["claude", "gemini"])
         # Verify entry is now terminal
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(entries[0]["status"], "complete")
 
     def test_already_running_session_not_restarted(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "pend2", "status": "resurrecting",
             "roster": [
                 {"base": "claude", "name": "claude", "session_name": "agentchattr-claude"},
@@ -261,7 +261,7 @@ class ResurrectionReplayTests(unittest.TestCase):
         self.assertEqual(self.started, [], "Should not restart already-running sessions")
 
     def test_partial_failure_recorded(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "partfail", "status": "killing",
             "roster": [
                 {"base": "claude", "name": "claude", "session_name": "agentchattr-claude"},
@@ -279,14 +279,14 @@ class ResurrectionReplayTests(unittest.TestCase):
                 app.resurrect_from_log()
 
         self.assertEqual(self.started, ["claude"])
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(entries[0]["status"], "partial_failed")
         self.assertEqual(len(entries[0]["errors"]), 1)
         self.assertEqual(entries[0]["errors"][0]["agent"], "gemini")
 
 
     def test_server_only_empty_roster_marked_complete(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "srv1", "status": "restarting_server", "scope": "server",
             "roster": [],
         })
@@ -294,19 +294,19 @@ class ResurrectionReplayTests(unittest.TestCase):
             with patch.object(app, '_tmux_session_exists', return_value=False):
                 app.resurrect_from_log()
         self.assertEqual(self.started, [], "Server-only restart should not start agents")
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(entries[0]["status"], "complete",
                          "Server-only restart with empty roster must be complete, not failed")
 
     def test_non_server_empty_roster_marked_failed(self):
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "empty1", "status": "killing", "scope": "agents",
             "roster": [],
         })
         with patch.object(app, '_start_agent_wrapper', side_effect=lambda b, c: self.started.append(b)):
             with patch.object(app, '_tmux_session_exists', return_value=False):
                 app.resurrect_from_log()
-        entries = app._read_restart_log()
+        entries = app.restart_log.read()
         self.assertEqual(entries[0]["status"], "failed")
 
 
@@ -324,13 +324,13 @@ class RenamedInstanceGuardTests(unittest.TestCase):
 
     def setUp(self):
         self._orig_registry = app.registry
-        self._orig_log_path = app._RESTART_LOG_PATH
+        self._orig_log_path = app.restart_log.path
         self.tmpdir = tempfile.mkdtemp()
-        app._RESTART_LOG_PATH = Path(self.tmpdir) / "restart_log.jsonl"
+        app.restart_log.path = Path(self.tmpdir) / "restart_log.jsonl"
 
     def tearDown(self):
         app.registry = self._orig_registry
-        app._RESTART_LOG_PATH = self._orig_log_path
+        app.restart_log.path = self._orig_log_path
 
     def test_roster_detects_renamed_instance(self):
         app.registry = _RenamedRegistry()
@@ -349,12 +349,12 @@ class APIRouteTests(unittest.IsolatedAsyncioTestCase):
         self._orig_registry = app.registry
         self._orig_store = app.store
         self._orig_event_loop = app._event_loop
-        self._orig_log_path = app._RESTART_LOG_PATH
+        self._orig_log_path = app.restart_log.path
         self._orig_config = app.config
         self._orig_token = app.session_token
 
         self.tmpdir = tempfile.mkdtemp()
-        app._RESTART_LOG_PATH = Path(self.tmpdir) / "restart_log.jsonl"
+        app.restart_log.path = Path(self.tmpdir) / "restart_log.jsonl"
         app.registry = _FakeRegistry()
         app.store = _FakeStore()
         app.config = {"server": {"data_dir": self.tmpdir}}
@@ -371,7 +371,7 @@ class APIRouteTests(unittest.IsolatedAsyncioTestCase):
         app.registry = self._orig_registry
         app.store = self._orig_store
         app._event_loop = self._orig_event_loop
-        app._RESTART_LOG_PATH = self._orig_log_path
+        app.restart_log.path = self._orig_log_path
         app.config = self._orig_config
         app.session_token = self._orig_token
 
@@ -443,7 +443,7 @@ class APIRouteTests(unittest.IsolatedAsyncioTestCase):
 
     def test_concurrent_restart_rejected(self):
         # Simulate an in-flight restart
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "inflight", "status": "grace", "scope": "agents",
         })
         resp = self.client.post("/api/restart", json={
@@ -454,7 +454,7 @@ class APIRouteTests(unittest.IsolatedAsyncioTestCase):
 
     def test_concurrent_dry_run_allowed(self):
         # Dry runs should always be allowed even with in-flight restart
-        app._append_restart_log({
+        app.restart_log.append({
             "restart_id": "inflight2", "status": "killing", "scope": "agents",
         })
         with patch.object(app, '_kill_agent_session', return_value=True):

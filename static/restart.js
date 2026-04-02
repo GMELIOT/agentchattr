@@ -12,8 +12,6 @@ function showRestartDialog() {
     modal.className = 'session-launcher-overlay';
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
-    const username = (document.getElementById('setting-username')?.value || 'user').trim();
-
     modal.innerHTML = `
         <div class="session-launcher-dialog" style="width:380px">
             <div class="session-launcher-header">

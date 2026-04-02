@@ -3420,6 +3420,23 @@ async def restart_system(request: Request):
 
     # Build roster snapshot
     roster = _build_roster()
+
+    # Block restart if any agent has been renamed (identity can't be restored yet)
+    if scope in ("agents", "everything"):
+        renamed = []
+        for agent in roster:
+            base, name = agent["base"], agent["name"]
+            # Canonical names are "base" or "base-N"
+            if name != base and not _re.fullmatch(rf"{_re.escape(base)}-\d+", name):
+                renamed.append({"name": name, "base": base})
+        if renamed:
+            names = ", ".join(r["name"] for r in renamed)
+            return JSONResponse({
+                "error": f"Cannot restart: renamed agents would lose their identity. "
+                         f"Renamed: {names}. Rename them back or restart them individually.",
+                "renamed_agents": renamed,
+            }, status_code=409)
+
     restart_id = uuid.uuid4().hex[:12]
 
     entry = {

@@ -285,5 +285,136 @@ class ResurrectionReplayTests(unittest.TestCase):
         self.assertEqual(entries[0]["errors"][0]["agent"], "gemini")
 
 
+class _RenamedRegistry(_FakeRegistry):
+    """Registry where claude has been renamed to claude-prime."""
+
+    def get_instances_for(self, base: str) -> list[dict]:
+        if base == "claude":
+            return [{"name": "claude-prime", "label": "Claude Prime", "slot": 1}]
+        return super().get_instances_for(base)
+
+
+class RenamedInstanceGuardTests(unittest.TestCase):
+    """Test that restart is blocked when roster contains renamed agents."""
+
+    def setUp(self):
+        self._orig_registry = app.registry
+        self._orig_log_path = app._RESTART_LOG_PATH
+        self.tmpdir = tempfile.mkdtemp()
+        app._RESTART_LOG_PATH = Path(self.tmpdir) / "restart_log.jsonl"
+
+    def tearDown(self):
+        app.registry = self._orig_registry
+        app._RESTART_LOG_PATH = self._orig_log_path
+
+    def test_roster_detects_renamed_instance(self):
+        app.registry = _RenamedRegistry()
+        roster = app._build_roster()
+        renamed = [a for a in roster if a["name"] == "claude-prime"]
+        self.assertEqual(len(renamed), 1)
+        self.assertEqual(renamed[0]["base"], "claude")
+
+
+class APIRouteTests(unittest.IsolatedAsyncioTestCase):
+    """Test the /api/restart HTTP route contract."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+
+        self._orig_registry = app.registry
+        self._orig_store = app.store
+        self._orig_event_loop = app._event_loop
+        self._orig_log_path = app._RESTART_LOG_PATH
+        self._orig_config = app.config
+        self._orig_token = app.session_token
+
+        self.tmpdir = tempfile.mkdtemp()
+        app._RESTART_LOG_PATH = Path(self.tmpdir) / "restart_log.jsonl"
+        app.registry = _FakeRegistry()
+        app.store = _FakeStore()
+        app.config = {"server": {"data_dir": self.tmpdir}}
+        app.session_token = "test-token"
+
+        self.client = TestClient(app.app)
+        self.headers = {"X-Session-Token": "test-token"}
+
+        self.kills: list[str] = []
+        self.starts: list[str] = []
+        self.server_restarts: list[bool] = []
+
+    def tearDown(self):
+        app.registry = self._orig_registry
+        app.store = self._orig_store
+        app._event_loop = self._orig_event_loop
+        app._RESTART_LOG_PATH = self._orig_log_path
+        app.config = self._orig_config
+        app.session_token = self._orig_token
+
+    def test_invalid_scope_rejected(self):
+        resp = self.client.post("/api/restart", json={"scope": "bananas"}, headers=self.headers)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("scope must be", resp.json()["error"])
+
+    def test_missing_scope_rejected(self):
+        resp = self.client.post("/api/restart", json={}, headers=self.headers)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_dry_run_returns_roster_without_kills(self):
+        with patch.object(app, '_kill_agent_session', side_effect=lambda s: self.kills.append(s) or True):
+            with patch.object(app, '_start_agent_wrapper', side_effect=lambda b, c: self.starts.append(b)):
+                resp = self.client.post("/api/restart", json={
+                    "scope": "agents", "reason": "test", "dry_run": True,
+                    "initiated_by": "test-user",
+                }, headers=self.headers)
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["dry_run"])
+        self.assertIn("roster", data)
+        self.assertEqual(self.kills, [], "Dry run must not kill sessions")
+        self.assertEqual(self.starts, [], "Dry run must not start wrappers")
+        self.assertEqual(app.store.messages, [], "Dry run must not post chat messages")
+
+    def test_renamed_agent_blocks_restart(self):
+        app.registry = _RenamedRegistry()
+        resp = self.client.post("/api/restart", json={
+            "scope": "agents", "reason": "test",
+        }, headers=self.headers)
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("renamed", resp.json()["error"].lower())
+
+    def test_scope_server_does_not_kill_agents(self):
+        with patch.object(app, '_kill_agent_session', side_effect=lambda s: self.kills.append(s) or True):
+            with patch.object(app, 'os') as mock_os:
+                mock_os.getpid.return_value = 99999
+                with patch.object(app.subprocess, 'Popen'):
+                    resp = self.client.post("/api/restart", json={
+                        "scope": "server", "reason": "test", "initiated_by": "test",
+                    }, headers=self.headers)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.kills, [], "scope=server must not kill agent sessions")
+
+    def test_scope_agents_does_not_restart_server(self):
+        popen_calls: list = []
+        orig_popen = app.subprocess.Popen
+
+        def track_popen(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            cmd_str = " ".join(str(c) for c in cmd) if isinstance(cmd, list) else str(cmd)
+            # Only track server restart commands (not wrapper starts)
+            if "kill" in cmd_str and "run.py" in cmd_str:
+                popen_calls.append(cmd_str)
+            return orig_popen(*args, **kwargs) if "wrapper.py" in cmd_str else unittest.mock.MagicMock()
+
+        with patch.object(app, '_kill_agent_session', return_value=True):
+            with patch.object(app.subprocess, 'Popen', side_effect=track_popen):
+                resp = self.client.post("/api/restart", json={
+                    "scope": "agents", "reason": "test", "initiated_by": "test",
+                }, headers=self.headers)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(popen_calls, [], "scope=agents must not spawn server restart")
+
 if __name__ == "__main__":
     unittest.main()

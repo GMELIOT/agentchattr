@@ -466,5 +466,64 @@ class APIRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(resp.json()["dry_run"])
 
 
+class _LabelTrackingRegistry(_FakeRegistry):
+    """Registry that tracks set_label calls and returns instances with slots."""
+
+    def __init__(self):
+        super().__init__()
+        self.label_calls: list[tuple[str, str]] = []
+
+    def get_instances_for(self, base: str) -> list[dict]:
+        if base == "claude":
+            return [
+                {"name": "claude", "label": "Claude", "slot": 1},
+                {"name": "claude-2", "label": "Claude 2", "slot": 2},
+            ]
+        return super().get_instances_for(base)
+
+    def set_label(self, name: str, label: str) -> bool:
+        self.label_calls.append((name, label))
+        return True
+
+
+class LabelRestoreTests(unittest.IsolatedAsyncioTestCase):
+    """Test that label restoration is per roster entry, not per base."""
+
+    def setUp(self):
+        self._orig_registry = app.registry
+
+    def tearDown(self):
+        app.registry = self._orig_registry
+
+    async def test_multi_instance_labels_restored_to_correct_slots(self):
+        reg = _LabelTrackingRegistry()
+        app.registry = reg
+
+        roster = [
+            {"base": "claude", "name": "claude", "label": "Claude PM", "slot": 1,
+             "session_name": "agentchattr-claude", "cwd": "/home/dev/merit"},
+            {"base": "claude", "name": "claude-2", "label": "Claude Reviewer", "slot": 2,
+             "session_name": "agentchattr-claude-2", "cwd": "/home/dev/merit"},
+        ]
+        await app._restore_labels(roster, max_wait=3)
+
+        # Both labels should be set on the correct instance
+        self.assertIn(("claude", "Claude PM"), reg.label_calls)
+        self.assertIn(("claude-2", "Claude Reviewer"), reg.label_calls)
+
+    async def test_default_labels_not_restored(self):
+        reg = _LabelTrackingRegistry()
+        app.registry = reg
+
+        roster = [
+            {"base": "claude", "name": "claude", "label": "Claude", "slot": 1,
+             "session_name": "agentchattr-claude", "cwd": "/home/dev/merit"},
+        ]
+        await app._restore_labels(roster, max_wait=1)
+
+        # Default label matches config, so no set_label call
+        self.assertEqual(reg.label_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

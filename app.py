@@ -56,6 +56,7 @@ telegram_callback_secret: str = ""
 _agent_start_lock = threading.Lock()
 _starting_agents: dict[str, float] = {}
 _AGENT_START_GRACE_SECONDS = 30
+_AGENT_BASE_RE = _re.compile(r"^[a-z0-9-]+$")
 
 # --- Permission interceptor: pending approvals (now backed by PermissionStore) ---
 # Legacy in-memory dict removed — all state lives in permission_store (SQLite)
@@ -1339,14 +1340,19 @@ def _release_agent_start(base: str) -> None:
 
 
 def _start_agent_wrapper(base: str, cfg: dict) -> None:
+    if not _AGENT_BASE_RE.fullmatch(base):
+        raise ValueError(f"invalid agent base name: {base!r}")
+
     root = Path(__file__).parent
     path_prefix = "/home/dev/.npm-global/bin:/home/dev/.local/bin:$PATH"
-    command = f"export PATH={path_prefix}; python3 wrapper.py {base}"
+    env = dict(os.environ)
+    env["PATH"] = path_prefix.replace("$PATH", env.get("PATH", ""))
     log_path = Path("/tmp") / f"{base}-wrapper.log"
     log_file = log_path.open("w", encoding="utf-8")
     subprocess.Popen(
-        ["script", "-qfc", command, "/dev/null"],
+        ["python3", "wrapper.py", base],
         cwd=str(root),
+        env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         start_new_session=True,

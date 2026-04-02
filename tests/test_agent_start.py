@@ -2,6 +2,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -87,6 +88,15 @@ class AgentStartTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("gemini", app._starting_agents)
+
+
+class AgentWrapperLaunchTests(unittest.TestCase):
+    def test_malformed_base_name_is_rejected_before_subprocess_launch(self):
+        with mock.patch("app.subprocess.Popen") as popen:
+            with self.assertRaises(ValueError):
+                app._start_agent_wrapper("gemini;touch-pwned", {"command": "gemini"})
+
+        popen.assert_not_called()
 
 
 if __name__ == "__main__":

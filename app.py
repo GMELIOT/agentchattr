@@ -1,6 +1,7 @@
 """agentchattr — FastAPI web UI + agent auto-trigger."""
 
 import asyncio
+import hmac
 import json
 import os
 import re as _re
@@ -56,6 +57,7 @@ telegram_callback_secret: str = ""
 _agent_start_lock = threading.Lock()
 _starting_agents: dict[str, float] = {}
 _AGENT_START_GRACE_SECONDS = 30
+_PERMISSION_WAIT_TIMEOUT_SECONDS = 60
 
 # --- Permission interceptor: pending approvals (now backed by PermissionStore) ---
 # Legacy in-memory dict removed — all state lives in permission_store (SQLite)
@@ -1472,10 +1474,15 @@ async def rehydrate_pending_permissions() -> int:
     return len(pending)
 
 
-async def _wait_for_permission_resolution(perm_id: str) -> dict:
-    """Block until the permission is resolved.  No timeout — pending until
-    explicitly approved, denied, or cancelled."""
-    while True:
+async def _wait_for_permission_resolution(
+    perm_id: str,
+    timeout_seconds: float = _PERMISSION_WAIT_TIMEOUT_SECONDS,
+) -> dict:
+    """Block until the permission is resolved or fail closed after timeout."""
+    import time as _time
+
+    deadline = _time.monotonic() + timeout_seconds
+    while _time.monotonic() < deadline:
         if not permission_store:
             return {"id": perm_id, "status": "cancelled"}
         perm = permission_store.get(perm_id)
@@ -1484,6 +1491,8 @@ async def _wait_for_permission_resolution(perm_id: str) -> dict:
         if perm["status"] != "pending":
             return perm
         await asyncio.sleep(0.5)
+    log.warning("Permission request %s timed out after %ss", perm_id, timeout_seconds)
+    return {"id": perm_id, "status": "denied", "reason": "timeout"}
 
 
 async def _store_permission_request(
@@ -2785,7 +2794,7 @@ async def respond_permission(perm_id: str, request: Request):
 async def telegram_callback(secret: str, request: Request):
     if not telegram_notifier or not telegram_callback_secret:
         return JSONResponse({"error": "telegram not configured"}, status_code=404)
-    if secret != telegram_callback_secret:
+    if not hmac.compare_digest(secret, telegram_callback_secret):
         return JSONResponse({"error": "invalid callback secret"}, status_code=403)
 
     body = await request.json()

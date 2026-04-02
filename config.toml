@@ -81,6 +81,14 @@ max_size_mb = 10
 [permissions]
 dry_run = false
 auto_expire_seconds = 300
+# Secrets must be set in config.local.toml (gitignored):
+#   hook_secret, telegram_bot_token, telegram_chat_id,
+#   telegram_callback_secret, telegram_webhook_base_url
+
+[slack_bridge]
+bot_token_env = "SLACK_BOT_TOKEN"
+channels = ["imladris-engineering", "leadership"]
+poll_interval_seconds = 30
 
 auto_allow = [
   "Read .+",
@@ -97,6 +105,23 @@ auto_allow = [
   "npx (tsc|vitest|eslint)",
   "git (status|diff|log|fetch|branch)",
   "Bash.*git (status|diff|log|fetch|branch)",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "Do\\ you\\ want\\ to\\ proceed\\?\\\n\\\n\u2502\\ 1\\.\\ Color\\ systems\\ \\(Dynamic\\ color,\\ tonal\\ palettes\\)\\.\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ 2\\.\\ Typography\\ \\(Type\\ scale,\\ fonts\\)\\.\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ 3\\.\\ Layout\\ \\(Adaptive\\ layouts,\\ grids\\)\\.\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ 4\\.\\ Interaction\\ \\(Transitions,\\ feedback\\)\\.\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ 5\\.\\ Style\\ \\(Elevation,\\ shapes,\\ containers\\)\\.\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ URLs\\ to\\ fetch:\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502\\\n\u2502\\ \\ \\-\\ https://m3\\.material\\.io/foundations\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \u2502",
+    "Would\\ you\\ like\\ to\\ run\\ the\\ following\\ command\\?\\ Reason:\\ Do\\ you\\ want\\ me\\ to\\ inspect\\ the\\ latest\\ Prisma\\ migration\\ style\\ outside\\ the\\ sandbox\\ so\\ I\\ can\\ add\\ the\\ Stripe\\ billing\\ migration\\ consistently\\?\\ \\$\\ ls\\ prisma/migrations\\ \\|\\ tail\\ \\-n\\ 5\\ \\&\\&\\ printf\\ '\\\\n\\-\\-\\-\\\\n'\\ \\&\\&\\ sed\\ \\-n\\ '1,220p'",
+    "Do\\ you\\ want\\ to\\ proceed\\?\\\n\\\n\u25cf\\ No\\ custom\\ middleware\\.ts\\ \u2014\\ Clerk\\ handles\\ auth\\ via\\ its\\ own\\ middleware\\ or\\ layout\\-level\\ checks\\.\\ Public\\ pages\\ outside\\ the\\ \\(app\\)\\ route\\ group\\ should\\ work\\\nwithout\\ auth\\.\\ Let\\ me\\ create\\ the\\ legal\\ pages\\.\\\nReading\\ 1\\ file\u2026\\ \\(ctrl\\+o\\ to\\ expand\\)\\\n\u23bf\\ \\ \\$\\ ls\\ /home/dev/merit/src/app/\\\\\\(auth\\\\\\)/\\\nBash\\ command\\\nls\\ /home/dev/merit/src/app/\\\\\\(auth\\\\\\)/\\\nCheck\\ auth\\ route\\ group\\\nThis\\ command\\ requires\\ approval",
+    "Would\\ you\\ like\\ to\\ make\\ the\\ following\\ edits\\?\\ Reason:\\ command\\ failed;\\ retry\\ without\\ sandbox\\?",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "git\\ status\\ \\-\\-short",
+    "Do\\ you\\ want\\ to\\ allow\\ me\\ to\\ inspect\\ the\\ API\\ test\\ files\\ outside\\ the\\ sandbox\\ so\\ I\\ can\\ target\\ the\\ correct\\ regression\\ suites\\ for\\ the\\ security\\ backlog\\?\\ \\$\\ ls\\ tests/api\\ 2>/dev/null\\\n\\\n\u2514\\ Search\\ name\\.\\*max\\|update\\.\\*name\\|users/me\\|profile\\ in\\ src\\\nRead\\ users\\-me\\.test\\.ts,\\ billing\\-checkout\\.test\\.ts\\\n\u2022\\ I\u2019ve\\ confirmed\\ the\\ name\\-length\\ rule\\ already\\ exists\\ in\\ the\\ validation\\ layer,\\ so\\ SEC\\-09\\ may\\ already\\ be\\ closed\\.\\ I\u2019m\\ reading\\ the\\ actual\\ route\\ and\\\nexisting\\ export/CV\\-bullet\\ tests\\ now\\ to\\ separate\\ real\\ gaps\\ from\\ already\\-fixed\\ items\\ before\\ I\\ make\\ any\\ changes\\.\\\n\u2022\\ Explored\\\n\u2514\\ Read\\ route\\.ts\\\nSearch\\ export/route\\|generateCvBullets\\|cv\\ bullets\\|rate\\ limit\\ in\\ tests\\\nWould\\ you\\ like\\ to\\ run\\ the\\ following\\ command\\?",
 ]
 
 always_ask = [

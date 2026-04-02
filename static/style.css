@@ -4709,3 +4709,4 @@ footer {
 .restart-confirm { background: var(--accent); color: #fff; border-color: var(--accent); }
 .restart-confirm:hover { opacity: 0.9; }
 .restart-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+.restart-confirm-danger { background: var(--danger, #e55); border-color: var(--danger, #e55); }

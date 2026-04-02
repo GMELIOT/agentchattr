@@ -18,7 +18,7 @@ function showRestartDialog() {
         <div class="session-launcher-dialog" style="width:380px">
             <div class="session-launcher-header">
                 <span>Restart</span>
-                <button onclick="this.closest('.session-launcher-overlay').remove()">&times;</button>
+                <button onclick="this.closest('.session-launcher-overlay').remove()" aria-label="Close">&times;</button>
             </div>
             <div class="restart-body">
                 <div class="restart-field">
@@ -65,6 +65,15 @@ function showRestartDialog() {
                         onclick="executeRestart()">Restart</button>
             </div>
         </div>`;
+
+    // Wire up scope danger styling
+    const radios = modal.querySelectorAll('input[name="restart-scope"]');
+    const confirmBtn = modal.querySelector('#restart-confirm-btn');
+    radios.forEach(r => r.addEventListener('change', () => {
+        const isEverything = modal.querySelector('input[name="restart-scope"]:checked')?.value === 'everything';
+        confirmBtn.classList.toggle('restart-confirm-danger', isEverything);
+        confirmBtn.textContent = isEverything ? 'Restart Everything' : 'Restart';
+    }));
 
     // Wire up custom reason toggle
     const sel = modal.querySelector('#restart-reason');
@@ -150,7 +159,7 @@ function handleRestartProgress(msg) {
     const labels = {
         grace: 'Waiting for agents to save state...',
         killing: 'Stopping agent sessions...',
-        restarting_server: 'Server restarting — page will reconnect...',
+        restarting_server: 'Server restarting -- page will reconnect...',
         resurrecting: 'Starting agents back up...',
         complete: 'Restart complete.',
     };
@@ -159,7 +168,7 @@ function handleRestartProgress(msg) {
     const detail = msg.detail ? ` ${msg.detail}` : '';
     progress.textContent = `${label}${detail}`;
 
-    if (msg.phase === 'complete') {
+    if (msg.phase === 'complete' || msg.phase === 'partial_failed') {
         const btn = modal.querySelector('#restart-confirm-btn');
         if (btn) {
             btn.textContent = 'Done';
@@ -167,5 +176,14 @@ function handleRestartProgress(msg) {
             btn.disabled = false;
         }
         _activeRestartId = null;
+    }
+    if (msg.phase === 'restarting_server') {
+        // Server will go down; show a refresh fallback after timeout
+        setTimeout(() => {
+            if (!progress) return;
+            if (progress.textContent.includes('Server restarting')) {
+                progress.innerHTML += '<br><button class="restart-confirm" onclick="location.reload()" style="margin-top:8px">Refresh page</button>';
+            }
+        }, 15000);
     }
 }

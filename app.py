@@ -3334,6 +3334,7 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
             return  # Server will die; resurrection happens on next startup
 
     # Phase 4: Resurrect agents (only if server is NOT restarting — otherwise startup handles it)
+    errors: list[dict] = []
     if scope == "agents":
         await _broadcast_restart_progress(restart_id, "resurrecting", "Starting agents")
         _update_restart_entry(restart_id, {"status": "resurrecting"})
@@ -3345,17 +3346,21 @@ async def _execute_restart(restart_id: str, scope: str, reason: str,
                 if cfg and cfg.get("type") != "api":
                     try:
                         _start_agent_wrapper(base, cfg)
-                        log.info("Resurrected %s", base)
+                        log.info("Resurrected %s (roster entry: %s)", base, agent["name"])
                     except Exception as exc:
-                        log.error("Failed to resurrect %s: %s", base, exc)
+                        log.error("Failed to resurrect %s: %s", agent["name"], exc)
+                        errors.append({"agent": agent["name"], "error": str(exc)})
                 await asyncio.sleep(2)  # stagger starts
 
-        _update_restart_entry(restart_id, {
-            "status": "complete",
-            "resurrected_at": _time.time(),
-        })
+        final_status = "partial_failed" if errors else "complete"
+        update: dict = {"status": final_status, "resurrected_at": _time.time()}
+        if errors:
+            update["errors"] = errors
+        _update_restart_entry(restart_id, update)
 
-    await _broadcast_restart_progress(restart_id, "complete", "Restart finished")
+    phase = "complete" if not errors else "partial_failed"
+    detail = "Restart finished" if not errors else f"{len(errors)} agent(s) failed to restart"
+    await _broadcast_restart_progress(restart_id, phase, detail)
 
 
 def resurrect_from_log() -> None:
@@ -3374,6 +3379,7 @@ def resurrect_from_log() -> None:
 
         log.info("Resurrecting agents from restart %s (status was: %s)", restart_id, status)
         import time as _time
+        errors: list[dict] = []
         for agent in roster:
             base = agent["base"]
             cfg = registry.get_base_config(base) if registry else None
@@ -3381,14 +3387,16 @@ def resurrect_from_log() -> None:
                 if not _tmux_session_exists(agent["session_name"]):
                     try:
                         _start_agent_wrapper(base, cfg)
-                        log.info("Resurrected %s from restart log", base)
+                        log.info("Resurrected %s (roster entry: %s) from restart log", base, agent["name"])
                     except Exception as exc:
-                        log.error("Failed to resurrect %s: %s", base, exc)
+                        log.error("Failed to resurrect %s: %s", agent["name"], exc)
+                        errors.append({"agent": agent["name"], "error": str(exc)})
 
-        _update_restart_entry(restart_id, {
-            "status": "complete",
-            "resurrected_at": _time.time(),
-        })
+        final_status = "partial_failed" if errors else "complete"
+        update: dict = {"status": final_status, "resurrected_at": _time.time()}
+        if errors:
+            update["errors"] = errors
+        _update_restart_entry(restart_id, update)
         break  # Only process the most recent non-terminal entry
 
 

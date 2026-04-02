@@ -285,6 +285,31 @@ class ResurrectionReplayTests(unittest.TestCase):
         self.assertEqual(entries[0]["errors"][0]["agent"], "gemini")
 
 
+    def test_server_only_empty_roster_marked_complete(self):
+        app._append_restart_log({
+            "restart_id": "srv1", "status": "restarting_server", "scope": "server",
+            "roster": [],
+        })
+        with patch.object(app, '_start_agent_wrapper', side_effect=lambda b, c: self.started.append(b)):
+            with patch.object(app, '_tmux_session_exists', return_value=False):
+                app.resurrect_from_log()
+        self.assertEqual(self.started, [], "Server-only restart should not start agents")
+        entries = app._read_restart_log()
+        self.assertEqual(entries[0]["status"], "complete",
+                         "Server-only restart with empty roster must be complete, not failed")
+
+    def test_non_server_empty_roster_marked_failed(self):
+        app._append_restart_log({
+            "restart_id": "empty1", "status": "killing", "scope": "agents",
+            "roster": [],
+        })
+        with patch.object(app, '_start_agent_wrapper', side_effect=lambda b, c: self.started.append(b)):
+            with patch.object(app, '_tmux_session_exists', return_value=False):
+                app.resurrect_from_log()
+        entries = app._read_restart_log()
+        self.assertEqual(entries[0]["status"], "failed")
+
+
 class _RenamedRegistry(_FakeRegistry):
     """Registry where claude has been renamed to claude-prime."""
 
@@ -415,6 +440,31 @@ class APIRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(popen_calls, [], "scope=agents must not spawn server restart")
+
+    def test_concurrent_restart_rejected(self):
+        # Simulate an in-flight restart
+        app._append_restart_log({
+            "restart_id": "inflight", "status": "grace", "scope": "agents",
+        })
+        resp = self.client.post("/api/restart", json={
+            "scope": "agents", "reason": "test", "initiated_by": "test",
+        }, headers=self.headers)
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("already in progress", resp.json()["error"])
+
+    def test_concurrent_dry_run_allowed(self):
+        # Dry runs should always be allowed even with in-flight restart
+        app._append_restart_log({
+            "restart_id": "inflight2", "status": "killing", "scope": "agents",
+        })
+        with patch.object(app, '_kill_agent_session', return_value=True):
+            resp = self.client.post("/api/restart", json={
+                "scope": "agents", "reason": "test", "dry_run": True,
+                "initiated_by": "test",
+            }, headers=self.headers)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["dry_run"])
+
 
 if __name__ == "__main__":
     unittest.main()

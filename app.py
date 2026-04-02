@@ -3372,9 +3372,16 @@ def resurrect_from_log() -> None:
             continue
         # Found a non-terminal entry — resurrect its roster
         restart_id = entry.get("restart_id", "")
+        scope = entry.get("scope", "")
         roster = entry.get("roster", [])
         if not roster:
-            _update_restart_entry(restart_id, {"status": "failed", "error": "empty roster"})
+            # Server-only restarts legitimately have empty rosters
+            import time as _time
+            _update_restart_entry(restart_id, {
+                "status": "complete" if scope == "server" else "failed",
+                "resurrected_at": _time.time(),
+                **({"error": "empty roster"} if scope != "server" else {}),
+            })
             continue
 
         log.info("Resurrecting agents from restart %s (status was: %s)", restart_id, status)
@@ -3417,6 +3424,17 @@ async def restart_system(request: Request):
     reason = body.get("reason", "").strip() or "no reason given"
     dry_run = bool(body.get("dry_run", False))
     initiated_by = body.get("initiated_by", "unknown").strip()
+
+    # Reject concurrent non-dry-run restarts
+    if not dry_run:
+        _terminal = ("complete", "failed", "partial_failed")
+        in_flight = [e for e in _read_restart_log()
+                     if e.get("status", "") not in _terminal and not e.get("dry_run")]
+        if in_flight:
+            return JSONResponse({
+                "error": "A restart is already in progress. Wait for it to complete.",
+                "in_flight_id": in_flight[-1].get("restart_id"),
+            }, status_code=409)
 
     # Build roster snapshot
     roster = _build_roster()

@@ -32,7 +32,7 @@ def main():
     session_token = secrets.token_hex(32)
 
     # Configure the FastAPI app (creates shared store)
-    from app import app, configure, set_event_loop, rehydrate_pending_permissions, store as _store_ref
+    from app import app, configure, set_event_loop, rehydrate_pending_permissions, resurrect_from_log, store as _store_ref
     configure(config, session_token=session_token)
 
     # Share stores with the MCP bridge
@@ -96,6 +96,8 @@ def main():
             session_engine.resume_active_sessions()
         # Rehydrate pending permissions from SQLite → UI/Telegram
         await rehydrate_pending_permissions()
+        # Resurrect agents from incomplete restart (if server was restarted)
+        resurrect_from_log()
 
     # Run web server
     import uvicorn

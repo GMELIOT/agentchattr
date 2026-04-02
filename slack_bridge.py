@@ -447,3 +447,137 @@ class SlackBridge:
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
+
+
+# ---------------------------------------------------------------------------
+# Standalone daemon entry point
+# ---------------------------------------------------------------------------
+
+def _load_config() -> dict:
+    """Load config from config.toml (or config.local.toml override)."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    config_path = Path(__file__).parent / "config.toml"
+    local_path = Path(__file__).parent / "config.local.toml"
+
+    cfg: dict = {}
+    if config_path.exists():
+        cfg = tomllib.loads(config_path.read_text())
+    if local_path.exists():
+        local = tomllib.loads(local_path.read_text())
+        cfg.update(local)
+    return cfg
+
+
+def _build_telegram_relay(cfg: dict) -> Callable[[ParsedMessage], None] | None:
+    """Build a Telegram relay callback for BLOCKER and REQUEST messages."""
+    perms = cfg.get("permissions", {})
+    tg_token = perms.get("telegram_bot_token", "")
+    tg_chat_id = perms.get("telegram_chat_id", "")
+    if not tg_token or not tg_chat_id:
+        return None
+
+    from telegram_notify import TelegramNotifier
+    notifier = TelegramNotifier(tg_token, tg_chat_id)
+
+    def relay(msg: ParsedMessage) -> None:
+        prefix = "BLOCKER" if msg.tag == "BLOCKER" else "Slack"
+        text = (
+            f"[{prefix}] {msg.title}\n"
+            f"From: {msg.sender or 'unknown'}\n"
+            f"Channel: #{msg.channel}\n"
+        )
+        if msg.body:
+            text += f"\n{msg.body[:500]}"
+        payload = {"chat_id": tg_chat_id, "text": text}
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{tg_token}/sendMessage",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)
+        except Exception as exc:
+            log.warning("Telegram relay failed: %s", exc)
+
+    return relay
+
+
+def main() -> None:
+    """Run the Slack bridge as a standalone daemon."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
+
+    cfg = _load_config()
+    bridge_cfg = cfg.get("slack_bridge", {})
+
+    # Resolve bot token from env var or direct value
+    token_env = bridge_cfg.get("bot_token_env", "SLACK_BOT_TOKEN")
+    bot_token = os.environ.get(token_env, bridge_cfg.get("bot_token", ""))
+    if not bot_token:
+        log.error("No Slack bot token found. Set %s env var or bot_token in config.", token_env)
+        return
+
+    channels = bridge_cfg.get("channels", ["imladris-engineering"])
+    poll_interval = bridge_cfg.get("poll_interval_seconds", 30)
+
+    data_dir = Path(cfg.get("server", {}).get("data_dir", "./data"))
+
+    # Build callbacks
+    telegram_relay = _build_telegram_relay(cfg)
+
+    def on_message(msg: ParsedMessage) -> None:
+        log.info("Received [%s] %s from %s in #%s", msg.tag, msg.title, msg.sender, msg.channel)
+
+    def on_blocker(msg: ParsedMessage) -> None:
+        log.warning("BLOCKER: %s -- %s", msg.title, msg.body[:200])
+        if telegram_relay:
+            telegram_relay(msg)
+
+    def on_request(msg: ParsedMessage) -> None:
+        if msg.tag == "REQUEST" and telegram_relay:
+            telegram_relay(msg)
+
+    def on_any(msg: ParsedMessage) -> None:
+        on_message(msg)
+        if msg.tag == "REQUEST":
+            on_request(msg)
+
+    bridge = SlackBridge(
+        bot_token=bot_token,
+        channels=channels,
+        poll_interval=poll_interval,
+        state_path=str(data_dir / "slack_bridge_state.json"),
+        log_path=str(data_dir / "inter-team-log.md"),
+        on_message=on_any,
+        on_blocker=on_blocker,
+    )
+
+    log.info("Slack bridge starting -- channels: %s, interval: %ds", channels, poll_interval)
+    log.info("Telegram relay: %s", "enabled" if telegram_relay else "disabled")
+
+    bridge._resolve_channels()
+    if not bridge._channel_ids:
+        log.error("No channels resolved. Check bot token permissions and channel names.")
+        return
+
+    log.info("Resolved %d channel(s). Entering poll loop.", len(bridge._channel_ids))
+
+    try:
+        bridge._running = True
+        bridge._poll_loop()
+    except KeyboardInterrupt:
+        log.info("Slack bridge stopped by user.")
+    finally:
+        bridge.stop()
+
+
+if __name__ == "__main__":
+    main()

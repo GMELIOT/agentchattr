@@ -182,11 +182,47 @@ def _save_hats():
 
 
 def _sanitize_svg(svg: str) -> str:
-    """Strip dangerous content from SVG string."""
-    svg = _re.sub(r'<script[^>]*>.*?</script>', '', svg, flags=_re.DOTALL | _re.IGNORECASE)
-    svg = _re.sub(r'\bon\w+\s*=', '', svg, flags=_re.IGNORECASE)
-    svg = _re.sub(r'javascript\s*:', '', svg, flags=_re.IGNORECASE)
-    return svg
+    """Return a safe SVG subset; reject unsupported tags/attributes."""
+    import xml.etree.ElementTree as ET
+
+    allowed_tags = {
+        "svg", "g", "path", "circle", "rect", "ellipse", "line",
+        "polyline", "polygon", "title", "desc",
+    }
+    allowed_attrs = {
+        "viewBox", "width", "height", "fill", "stroke", "stroke-width",
+        "stroke-linecap", "stroke-linejoin", "stroke-miterlimit",
+        "stroke-dasharray", "stroke-dashoffset", "opacity",
+        "fill-opacity", "stroke-opacity", "transform", "d", "cx", "cy",
+        "r", "rx", "ry", "x", "y", "x1", "y1", "x2", "y2", "points",
+        "xmlns",
+    }
+
+    def local_name(name: str) -> str:
+        return name.rsplit("}", 1)[-1] if "}" in name else name
+
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return ""
+
+    for element in root.iter():
+        if local_name(element.tag) not in allowed_tags:
+            return ""
+        for attr_name, attr_value in list(element.attrib.items()):
+            attr = local_name(attr_name)
+            value = (attr_value or "").strip().lower()
+            if (
+                attr not in allowed_attrs
+                or attr.startswith("on")
+                or "javascript:" in value
+                or value.startswith("data:")
+            ):
+                return ""
+
+    if local_name(root.tag) != "svg":
+        return ""
+    return ET.tostring(root, encoding="unicode")
 
 
 def set_agent_hat(agent: str, svg: str) -> str | None:
@@ -197,6 +233,8 @@ def set_agent_hat(agent: str, svg: str) -> str | None:
     if len(svg) > 5120:
         return "Hat SVG too large (max 5KB)."
     svg = _sanitize_svg(svg)
+    if not svg:
+        return "Hat SVG contains unsupported or unsafe markup."
     agent_hats[agent.lower()] = svg
     _save_hats()
     if _event_loop:

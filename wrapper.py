@@ -373,6 +373,24 @@ def _auth_headers(token: str, *, include_json: bool = False) -> dict[str, str]:
     return headers
 
 
+def _migrate_queue_file(old_queue: Path, new_queue: Path) -> None:
+    """Move unread queue entries to the new identity queue path."""
+    if old_queue == new_queue or not old_queue.exists():
+        return
+
+    try:
+        payload = old_queue.read_text("utf-8")
+    except Exception:
+        return
+    if not payload:
+        return
+
+    new_queue.parent.mkdir(parents=True, exist_ok=True)
+    with new_queue.open("a", encoding="utf-8") as f:
+        f.write(payload)
+    old_queue.write_text("", "utf-8")
+
+
 def _sender_family(sender: str) -> str:
     return sender.split("-", 1)[0]
 
@@ -982,6 +1000,11 @@ def main():
             proxy.agent_name = current_name
             proxy.token = current_token
         if changed:
+            if new_name and new_name != old_name:
+                _migrate_queue_file(
+                    data_dir / f"{old_name}_queue.jsonl",
+                    data_dir / f"{current_name}_queue.jsonl",
+                )
             if new_name and new_name != old_name:
                 print(f"  Identity updated: {old_name} -> {new_name}")
             if new_token and new_token != old_token:
